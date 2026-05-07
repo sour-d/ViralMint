@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2025-2026 ViralMint Contributors
+import logging
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import event, text
+from backend.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=settings.DEBUG,
+    connect_args={"check_same_thread": False},  # SQLite only
+)
+
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
+)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    """Enable WAL mode for concurrent reads + faster writes."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=5000")   # Wait up to 5s on lock contention
+    cursor.execute("PRAGMA cache_size=-64000")   # 64MB cache
+    cursor.execute("PRAGMA temp_store=MEMORY")
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
+async def get_db() -> AsyncSession:
+    """FastAPI dependency — yields an async DB session."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+
+async def init_db():
+    """Create all tables. Called once at startup from run.py."""
+    # Import all models so Base knows about them
+    from backend.models import (  # noqa: F401
+        user_settings, user_behavior, feature_flag,
+        job, scout_result, downloaded_video, generated_video,
+        messaging_config, chat_session, user_profile,
+        video_metrics, viral_formula,
+        connected_channel, dynamic_template, caption_style,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        # Idempotent column additions for SQLite (no Alembic)
+        await _add_column_if_missing(conn, "downloaded_videos", "transcript_segments_json", "TEXT")
+        await _add_column_if_missing(conn, "generated_videos", "source_type", "VARCHAR(30)")
+        # Clip extraction fields
+        await _add_column_if_missing(conn, "generated_videos", "clip_start_seconds", "FLOAT")
+        await _add_column_if_missing(conn, "generated_videos", "clip_end_seconds", "FLOAT")
+        await _add_column_if_missing(conn, "generated_videos", "clip_virality_score", "FLOAT")
+        await _add_column_if_missing(conn, "generated_videos", "clip_virality_reason", "TEXT")
+        await _add_column_if_missing(conn, "generated_videos", "caption_status", "VARCHAR(20)")
+        await _add_column_if_missing(conn, "generated_videos", "metadata_status", "VARCHAR(20)")
+        # BYOK: per-user encrypted keys (override .env at runtime)
+        await _add_column_if_missing(conn, "user_settings", "ai_provider", "VARCHAR(20)")
+        await _add_column_if_missing(conn, "user_settings", "ai_model", "VARCHAR(100)")
+        await _add_column_if_missing(conn, "user_settings", "ai_api_key_encrypted", "TEXT")
+        await _add_column_if_missing(conn, "user_settings", "youtube_api_key_encrypted", "TEXT")
+
+    # Clean up zombie jobs — any jobs stuck at "running"/"pending" from a previous crash
+    await _cleanup_zombie_jobs()
+
+
+async def _cleanup_zombie_jobs():
+    """Mark jobs stuck at running/pending as failed — they can't recover after restart."""
+    try:
+        async with AsyncSessionLocal() as db:
+            from backend.models.job import Job
+            from sqlalchemy import update
+            result = await db.execute(
+                update(Job)
+                .where(Job.status.in_(["running", "pending"]))
+                .values(status="failed", error_message="Server restarted — job did not complete")
+            )
+            if result.rowcount > 0:
+                logger.warning(f"Marked {result.rowcount} zombie jobs as failed from previous session")
+            await db.commit()
+    except Exception as e:
+        logger.warning(f"Zombie job cleanup failed: {e}")
+
+
+async def _add_column_if_missing(conn, table: str, column: str, col_type: str):
+    """SQLite-safe column addition — no-op if already exists."""
+    try:
+        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+    except Exception:
+        pass  # Column already exists — expected for idempotent migrations

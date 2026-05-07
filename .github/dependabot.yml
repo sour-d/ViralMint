@@ -1,0 +1,44 @@
+# Dependabot keeps our dependencies fresh — security patches arrive as
+# small focused PRs we can review and merge instead of rotting on a
+# vulnerable pinned version. Three ecosystems: pip (backend), npm
+# (frontend), and the GitHub Actions we run in CI.
+#
+# Schedule is weekly to keep the PR firehose manageable; security
+# updates ignore the schedule and ship immediately regardless.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(py)"
+    labels:
+      - "dependencies"
+      - "python"
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(js)"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(ci)"
+    labels:
+      - "dependencies"
+      - "ci"
