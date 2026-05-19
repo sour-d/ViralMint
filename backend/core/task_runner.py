@@ -1050,6 +1050,110 @@ async def run_news_save(
         await update_job_status(job_id, "failed", error_message=str(e))
 
 
+async def run_runpod_generate(
+    job_id: str,
+    prompt: str,
+    start_image: str,
+    length_seconds: int = 5,
+    user_id: str = "local",
+):
+    """Generate video via ComfyUI on a RunPod GPU Pod."""
+    logger.info("TASK START runpod_generate | job=%s", job_id[:8])
+    from backend.agents.job_helper import update_job_status
+    from backend.core.ws_manager import ws_manager
+    from backend.core.api_keys import get_runpod_api_key, get_runpod_pod_id
+    from backend.services import runpod_service
+    from backend.models.user_settings import UserSettings
+    from backend.models.generated_video import GeneratedVideo
+    from backend.config import settings
+    from backend.database import AsyncSessionLocal
+    from sqlalchemy import select
+    from uuid import uuid4
+
+    try:
+        await ws_manager.send({
+            "type": "job_started",
+            "job_id": job_id,
+            "job_type": "runpod_generate",
+            "message": "Starting RunPod video generation…",
+        }, user_id)
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(UserSettings).where(UserSettings.user_id == user_id)
+            )
+            user_settings = result.scalar_one_or_none()
+
+        api_key = get_runpod_api_key(user_settings)
+        stored_pod_id = get_runpod_pod_id(user_settings)
+        status = await runpod_service.get_pod_status(api_key, stored_pod_id)
+        if not status.get("can_generate"):
+            raise RuntimeError(status.get("message") or "RunPod pod is not ready")
+
+        pod_id = status["pod_id"]
+        base_url = runpod_service.get_comfy_base_url(pod_id)
+        image_path = runpod_service.resolve_media_path(start_image)
+
+        await update_job_status(job_id, "running", progress_pct=0, current_step="Connecting to ComfyUI…")
+
+        async def on_progress(pct: float, step: str):
+            await update_job_status(job_id, "running", progress_pct=pct, current_step=step)
+            await ws_manager.send_progress(job_id, pct, step, user_id)
+
+        out_name = f"runpod_{uuid4().hex[:12]}.mp4"
+        output_path = settings.GENERATED_DIR / out_name
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        await runpod_service.run_comfy_img2vid(
+            base_url=base_url,
+            prompt=prompt,
+            start_image_path=image_path,
+            length_seconds=length_seconds,
+            output_path=output_path,
+            on_progress=on_progress,
+        )
+
+        title = prompt[:80] + ("…" if len(prompt) > 80 else "")
+        async with AsyncSessionLocal() as db:
+            gv = GeneratedVideo(
+                user_id=user_id,
+                title=title,
+                script=prompt,
+                video_path=str(output_path),
+                aspect_ratio="9:16",
+                duration_seconds=length_seconds,
+                gen_tier="runpod",
+                source_type="runpod_comfyui",
+                status="ready",
+            )
+            db.add(gv)
+            await db.commit()
+            await db.refresh(gv)
+
+        await update_job_status(
+            job_id, "success",
+            progress_pct=100,
+            current_step="Video ready",
+            output_data={"generated_video_id": gv.id},
+        )
+        await ws_manager.send({
+            "type": "job_complete",
+            "job_id": job_id,
+            "result": {"generated_video_id": gv.id, "title": gv.title},
+        }, user_id)
+        logger.info("TASK DONE  runpod_generate | job=%s video=%s", job_id[:8], gv.id[:8])
+
+    except Exception as e:
+        logger.error("TASK FAIL  runpod_generate | job=%s: %s", job_id[:8], e, exc_info=True)
+        from backend.agents.job_helper import update_job_status as _update
+        await _update(job_id, "failed", error_message=str(e))
+        await ws_manager.send({
+            "type": "job_failed",
+            "job_id": job_id,
+            "error": str(e),
+        }, user_id)
+
+
 def dispatch(coro):
     """Fire-and-forget an async task with concurrency limiting (max 3 concurrent)."""
     logger.debug("Dispatching async task: %s", coro.__qualname__ if hasattr(coro, '__qualname__') else type(coro).__name__)

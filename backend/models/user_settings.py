@@ -18,6 +18,8 @@ class UserSettings(Base, TimestampMixin):
 
     # ── Service API keys (BYOK — override .env per-user) ──
     youtube_api_key_encrypted = Column(Text, nullable=True)         # YouTube Data API v3 key
+    runpod_api_key_encrypted = Column(Text, nullable=True)          # RunPod API key (AI Video)
+    runpod_pod_id = Column(String(64), nullable=True)               # Managed ComfyUI pod ID
 
     # ── Scout credentials (user-specific cookies) ──────
     douyin_cookie_encrypted = Column(Text, nullable=True)

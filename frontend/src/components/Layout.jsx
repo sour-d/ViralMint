@@ -16,6 +16,7 @@ import PhotoLibraryIcon from "@mui/icons-material/PhotoLibraryOutlined"
 import SensorsIcon from "@mui/icons-material/SensorsOutlined"
 import PhoneIphoneIcon from "@mui/icons-material/PhoneIphoneOutlined"
 import ContentCutIcon from "@mui/icons-material/ContentCutOutlined"
+import SmartDisplayIcon from "@mui/icons-material/SmartDisplayOutlined"
 import SettingsIcon from "@mui/icons-material/SettingsOutlined"
 
 const DRAWER_WIDTH = 240
@@ -27,6 +28,7 @@ const navItems = [
   { to: "/clips",     icon: <ContentCutIcon />,       label: "Clip Studio" },
   { to: "/videos",    icon: <VideoLibraryIcon />,     label: "Library" },
   { to: "/stock",     icon: <PhotoLibraryIcon />,     label: "Stock Video" },
+  { to: "/ai-video",  icon: <SmartDisplayIcon />,     label: "AI Video" },
   { to: "/messaging", icon: <PhoneIphoneIcon />,      label: "Messaging" },
   ...pluginNavItems.filter(i => (i.position || "top") === "top"),
 ]

@@ -1,0 +1,7 @@
+{
+  "start_image_filename": "start_frame.png",
+  "prompt_node_id": "REPLACE_ME",
+  "prompt_input_key": "text",
+  "length_node_id": "REPLACE_ME",
+  "length_input_key": "length"
+}

@@ -45,6 +45,13 @@ _DEFAULTS = {
                 "openai/gpt-5.4-mini",
                 "google/gemini-3.1-pro-preview",
                 "google/gemini-3.1-flash-lite",
+                "openrouter/free",
+                "nvidia/nemotron-3-super-120b-a12b:free",
+                "openrouter/owl-alpha",
+                "openai/gpt-oss-120b:free",
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+                "google/gemma-4-31b-it:free",
+                ""
             ],
         },
     },

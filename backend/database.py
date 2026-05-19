@@ -81,6 +81,8 @@ async def init_db():
         await _add_column_if_missing(conn, "user_settings", "ai_model", "VARCHAR(100)")
         await _add_column_if_missing(conn, "user_settings", "ai_api_key_encrypted", "TEXT")
         await _add_column_if_missing(conn, "user_settings", "youtube_api_key_encrypted", "TEXT")
+        await _add_column_if_missing(conn, "user_settings", "runpod_api_key_encrypted", "TEXT")
+        await _add_column_if_missing(conn, "user_settings", "runpod_pod_id", "VARCHAR(64)")
 
     # Clean up zombie jobs — any jobs stuck at "running"/"pending" from a previous crash
     await _cleanup_zombie_jobs()

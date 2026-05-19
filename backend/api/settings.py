@@ -29,6 +29,8 @@ class SettingsResponse(BaseModel):
 
     # Service API keys (BYOK) — booleans only, never the plaintext key
     youtube_api_key_set: bool = False
+    runpod_api_key_set: bool = False
+    runpod_pod_id: Optional[str] = None
 
     # OAuth / cookie status
     douyin_cookie_set: bool = False
@@ -63,6 +65,8 @@ class SettingsUpdate(BaseModel):
     # Service API keys (BYOK) — plaintext on input, encrypted before storage.
     # Send empty string to clear a stored key.
     youtube_api_key: Optional[str] = None
+    runpod_api_key: Optional[str] = None
+    runpod_pod_id: Optional[str] = None
 
     # Preferences
     preferred_voice_id: Optional[str] = None
@@ -97,6 +101,8 @@ async def get_settings():
         ai_model=s.ai_model,
         ai_api_key_set=bool(s.ai_api_key_encrypted),
         youtube_api_key_set=bool(s.youtube_api_key_encrypted),
+        runpod_api_key_set=bool(s.runpod_api_key_encrypted),
+        runpod_pod_id=s.runpod_pod_id,
         douyin_cookie_set=bool(s.douyin_cookie_encrypted),
         tiktok_cookie_set=bool(s.tiktok_cookie_encrypted),
         youtube_channel_title=s.youtube_channel_title,
@@ -140,6 +146,10 @@ async def update_settings(update: SettingsUpdate):
         # Service API keys (BYOK) — empty string clears, populated value encrypts
         if update.youtube_api_key is not None:
             s.youtube_api_key_encrypted = encrypt(update.youtube_api_key) if update.youtube_api_key else None
+        if update.runpod_api_key is not None:
+            s.runpod_api_key_encrypted = encrypt(update.runpod_api_key) if update.runpod_api_key else None
+        if update.runpod_pod_id is not None:
+            s.runpod_pod_id = update.runpod_pod_id or None
 
         # Preference fields
         if update.preferred_voice_id is not None:
@@ -352,6 +362,12 @@ async def get_health():
         or (s and s.youtube_api_key_encrypted)
     )
     health["youtube_api_key"] = {"status": "configured" if has_youtube_key else "not_configured"}
+
+    has_runpod_key = bool(
+        app_settings.RUNPOD_API_KEY
+        or (s and s.runpod_api_key_encrypted)
+    )
+    health["runpod_api_key"] = {"status": "configured" if has_runpod_key else "not_configured"}
 
     # YouTube quota
     from backend.services.youtube_quota import _usage_today, DAILY_LIMIT

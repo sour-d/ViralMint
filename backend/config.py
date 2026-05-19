@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     YOUTUBE_API_KEY: str = ""           # YouTube scout, channel reader, comments
     TIKHUB_API_KEY: str = ""            # TikTok / Douyin scout (alternative: cookies in Settings)
     PEXELS_API_KEY: str = ""            # Stock video footage
+    RUNPOD_API_KEY: str = ""            # RunPod GPU Pod + ComfyUI (AI Video)
 
     # ── Upload OAuth ──────────────────────────────────
     YOUTUBE_CLIENT_ID: str = ""

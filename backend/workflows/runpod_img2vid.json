@@ -1,0 +1,16 @@
+{
+  "_comment": "Replace with ComfyUI Workflow > Export (API). Update runpod_mapping.json with real node IDs.",
+  "3": {
+    "inputs": {
+      "image": "start_frame.png"
+    },
+    "class_type": "LoadImage"
+  },
+  "6": {
+    "inputs": {
+      "text": "REPLACE_PROMPT",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  }
+}

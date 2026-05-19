@@ -10,6 +10,7 @@ import EditIcon from "@mui/icons-material/EditOutlined"
 import DeleteIcon from "@mui/icons-material/DeleteOutlineOutlined"
 import CheckCircleIcon from "@mui/icons-material/CheckCircleOutline"
 import YouTubeIcon from "@mui/icons-material/YouTube"
+import CloudQueueIcon from "@mui/icons-material/CloudQueue"
 import useAppStore from "../../store/appStore"
 
 /**
@@ -27,6 +28,17 @@ const SERVICES = [
     placeholder: "AIzaSy...",
     docsHref: "https://console.cloud.google.com/apis/credentials",
     docsHint: "Get a free key at Google Cloud Console → Credentials → Create API key (10K units/day free)",
+  },
+  {
+    id: "runpod",
+    label: "RunPod API",
+    description: "Powers AI Video — deploys a ComfyUI GPU pod and runs img2vid workflows",
+    icon: <CloudQueueIcon sx={{ color: "#7C3AED", fontSize: 28 }} />,
+    settingsKey: "runpod_api_key",
+    setFlag: "runpod_api_key_set",
+    placeholder: "rpa_...",
+    docsHref: "https://www.runpod.io/console/serverless/user/settings",
+    docsHint: "Create an API key under RunPod Console → Settings → API Keys",
   },
   // To add more services later, append:
   // { id: "pexels", label: "Pexels API", description: "Stock footage", ...,

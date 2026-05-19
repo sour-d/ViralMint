@@ -4,6 +4,7 @@
 REST endpoints for video generation.
 
 POST /api/generate/stock         — Stock footage (Pexels)
+POST /api/generate/runpod        — ComfyUI img2vid on RunPod GPU Pod
 POST /api/generate/split-scenes  — AI-split script into scenes with Pexels keywords
 """
 import json
@@ -40,6 +41,12 @@ class StockGenerateRequest(BaseModel):
     source_id: Optional[str] = None
     scenes: Optional[list[StockScene]] = None
     start_image: Optional[str] = None
+
+
+class RunpodGenerateRequest(BaseModel):
+    prompt: str
+    start_image: str
+    length_seconds: int = 5
 
 
 class SplitScenesRequest(BaseModel):
@@ -99,6 +106,60 @@ async def generate_stock(body: StockGenerateRequest):
         music_genre=body.music_genre,
         start_image=body.start_image,
     )
+
+
+@router.post("/runpod")
+async def generate_runpod(body: RunpodGenerateRequest):
+    """Generate a video via ComfyUI on a RunPod GPU Pod."""
+    prompt = body.prompt.strip()
+    if not prompt:
+        raise HTTPException(400, "Prompt is required")
+    if not body.start_image:
+        raise HTTPException(400, "Start image is required")
+    if body.length_seconds < 1 or body.length_seconds > 60:
+        raise HTTPException(400, "Length must be between 1 and 60 seconds")
+
+    from backend.models.user_settings import UserSettings
+    from backend.core.api_keys import get_runpod_api_key, get_runpod_pod_id
+    from backend.services import runpod_service
+    from backend.agents.job_helper import create_job
+    from backend.core.task_runner import run_runpod_generate, dispatch
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(UserSettings).where(UserSettings.user_id == "local"))
+        user_settings = result.scalar_one_or_none()
+
+    api_key = get_runpod_api_key(user_settings)
+    if not api_key:
+        raise HTTPException(
+            503,
+            detail="RunPod API key not configured. Add it in Settings or RUNPOD_API_KEY in .env",
+        )
+
+    stored_pod_id = get_runpod_pod_id(user_settings)
+    status = await runpod_service.get_pod_status(api_key, stored_pod_id)
+    if not status.get("can_generate"):
+        raise HTTPException(503, detail=status.get("message") or "RunPod pod is not ready")
+
+    try:
+        runpod_service.resolve_media_path(body.start_image)
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail=str(e)) from e
+
+    job = await create_job("runpod_generate", "local", {
+        "prompt": prompt,
+        "start_image": body.start_image,
+        "length_seconds": body.length_seconds,
+    })
+
+    dispatch(run_runpod_generate(
+        job_id=job.id,
+        prompt=prompt,
+        start_image=body.start_image,
+        length_seconds=body.length_seconds,
+        user_id="local",
+    ))
+    return {"job_id": job.id}
 
 
 @router.post("/split-scenes")

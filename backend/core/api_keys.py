@@ -31,3 +31,15 @@ def _user_key(user_settings, attr: str) -> str:
 def get_youtube_api_key(user_settings=None) -> str:
     """YouTube Data API v3 key. Per-user → .env → ""."""
     return _user_key(user_settings, "youtube_api_key_encrypted") or env.YOUTUBE_API_KEY or ""
+
+
+def get_runpod_api_key(user_settings=None) -> str:
+    """RunPod API key. Per-user → .env → ""."""
+    return _user_key(user_settings, "runpod_api_key_encrypted") or env.RUNPOD_API_KEY or ""
+
+
+def get_runpod_pod_id(user_settings=None) -> str:
+    """Stored RunPod pod ID for the managed ComfyUI pod."""
+    if user_settings and getattr(user_settings, "runpod_pod_id", None):
+        return user_settings.runpod_pod_id or ""
+    return ""

@@ -76,10 +76,22 @@ def build_frontend():
     """Install npm deps and build if dist/ doesn't exist or is stale."""
     fe_dir = ROOT / "frontend"
     dist_dir = fe_dir / "dist"
+    src_dir = fe_dir / "src"
     if not (fe_dir / "node_modules").exists():
         print("📦 Installing frontend dependencies...")
         subprocess.run(["npm", "install"], cwd=fe_dir, check=True)
-    if not dist_dir.exists():
+
+    needs_build = not dist_dir.exists()
+    if not needs_build and src_dir.exists():
+        dist_mtime = (dist_dir / "index.html").stat().st_mtime
+        newest_src = max(
+            (p.stat().st_mtime for p in src_dir.rglob("*") if p.is_file()),
+            default=0,
+        )
+        if newest_src > dist_mtime:
+            needs_build = True
+
+    if needs_build:
         print("🏗️  Building frontend...")
         subprocess.run(["npm", "run", "build"], cwd=fe_dir, check=True)
         print("✅ Frontend built")
