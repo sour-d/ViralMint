@@ -46,6 +46,7 @@ class StockGenerateRequest(BaseModel):
 class RunpodGenerateRequest(BaseModel):
     prompt: str
     start_image: str
+    reference_audio: str
     length_seconds: int = 5
 
 
@@ -116,6 +117,8 @@ async def generate_runpod(body: RunpodGenerateRequest):
         raise HTTPException(400, "Prompt is required")
     if not body.start_image:
         raise HTTPException(400, "Start image is required")
+    if not body.reference_audio:
+        raise HTTPException(400, "Reference audio is required")
     if body.length_seconds < 1 or body.length_seconds > 60:
         raise HTTPException(400, "Length must be between 1 and 60 seconds")
 
@@ -143,12 +146,14 @@ async def generate_runpod(body: RunpodGenerateRequest):
 
     try:
         runpod_service.resolve_media_path(body.start_image)
+        runpod_service.resolve_media_path(body.reference_audio)
     except FileNotFoundError as e:
         raise HTTPException(404, detail=str(e)) from e
 
     job = await create_job("runpod_generate", "local", {
         "prompt": prompt,
         "start_image": body.start_image,
+        "reference_audio": body.reference_audio,
         "length_seconds": body.length_seconds,
     })
 
@@ -156,6 +161,7 @@ async def generate_runpod(body: RunpodGenerateRequest):
         job_id=job.id,
         prompt=prompt,
         start_image=body.start_image,
+        reference_audio=body.reference_audio,
         length_seconds=body.length_seconds,
         user_id="local",
     ))

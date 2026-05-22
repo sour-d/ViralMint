@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+ALLOWED_AUDIO_EXTS = {".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"}
 
 
 @router.post("/media/upload")
@@ -44,6 +45,37 @@ async def upload_media(file: UploadFile = File(...)):
         "filename": filename,
         "url": f"/api/media/{filename}",
         "size_kb": round(size_kb, 1),
+    }
+
+
+@router.post("/media/upload-audio")
+async def upload_audio(file: UploadFile = File(...)):
+    """Upload reference audio for RunPod / ComfyUI video generation."""
+    suffix = Path(file.filename).suffix.lower() if file.filename else ""
+    if suffix not in ALLOWED_AUDIO_EXTS:
+        raise HTTPException(
+            400,
+            f"Unsupported audio type: {suffix}. Allowed: {', '.join(sorted(ALLOWED_AUDIO_EXTS))}",
+        )
+
+    max_size = 50 * 1024 * 1024  # 50MB
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(413, f"Audio too large. Maximum: 50MB")
+
+    file_id = str(uuid4())[:12]
+    filename = f"{file_id}{suffix}"
+    dest = settings.TMP_DIR / filename
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with open(dest, "wb") as f:
+        f.write(content)
+
+    logger.info("Audio uploaded: %s (%.0fKB)", filename, len(content) / 1024)
+    return {
+        "id": file_id,
+        "filename": filename,
+        "url": f"/api/media/{filename}",
+        "size_kb": round(len(content) / 1024, 1),
     }
 
 

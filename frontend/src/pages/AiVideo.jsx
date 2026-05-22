@@ -6,6 +6,7 @@ import {
 import MovieCreationIcon from "@mui/icons-material/MovieCreation"
 import SmartDisplayIcon from "@mui/icons-material/SmartDisplay"
 import ImageUpload from "../components/create/ImageUpload"
+import AudioUpload from "../components/create/AudioUpload"
 import ActiveJobsBanner from "../components/create/ActiveJobsBanner"
 import RunPodStatusCard from "../components/runpod/RunPodStatusCard"
 import useAppStore from "../store/appStore"
@@ -18,8 +19,9 @@ export default function AiVideo() {
 
   const [prompt, setPrompt] = useState("")
   const [startImage, setStartImage] = useState(null)
+  const [referenceAudio, setReferenceAudio] = useState(null)
   const [lengthSeconds, setLengthSeconds] = useState(5)
-  const [comfyReady, setComfyReady] = useState(false)
+  const [canGenerate, setCanGenerate] = useState(false)
   const [generating, setGenerating] = useState(false)
 
   const handleGenerate = async () => {
@@ -31,8 +33,12 @@ export default function AiVideo() {
       showSnackbar("Upload a start image", "warning")
       return
     }
-    if (!comfyReady) {
-      showSnackbar("Deploy the RunPod pod and wait until ComfyUI is ready", "warning")
+    if (!referenceAudio) {
+      showSnackbar("Upload reference audio (required for this workflow)", "warning")
+      return
+    }
+    if (!canGenerate) {
+      showSnackbar("Deploy the pod, install models, and wait until ready", "warning")
       return
     }
 
@@ -41,6 +47,7 @@ export default function AiVideo() {
       const { data } = await http.post("/api/generate/runpod", {
         prompt: prompt.trim(),
         start_image: startImage,
+        reference_audio: referenceAudio,
         length_seconds: lengthSeconds,
       })
       startJob(data.job_id, "runpod_generate", "Generating AI video on RunPod…")
@@ -70,7 +77,7 @@ export default function AiVideo() {
               AI Video
             </Typography>
             <Typography variant="caption" sx={{ color: "text.secondary" }}>
-              Image-to-video via ComfyUI on RunPod
+              Image + audio → video via ComfyUI on RunPod (assets uploaded from this app)
             </Typography>
           </Box>
         </Stack>
@@ -78,7 +85,7 @@ export default function AiVideo() {
         <Button
           variant="contained"
           size="medium"
-          disabled={generating || !comfyReady || !prompt.trim() || !startImage}
+          disabled={generating || !canGenerate || !prompt.trim() || !startImage || !referenceAudio}
           onClick={handleGenerate}
           startIcon={<MovieCreationIcon />}
           sx={{ borderRadius: 2, fontWeight: 600, textTransform: "none", px: 2.5 }}
@@ -87,10 +94,10 @@ export default function AiVideo() {
         </Button>
       </Box>
 
-      <ActiveJobsBanner filter={(j) => j.jobType === "runpod_generate"} />
+      <ActiveJobsBanner filter={(j) => j.jobType === "runpod_generate" || j.jobType === "runpod_install_models"} />
 
       <Box sx={{ flex: 1, overflow: "auto", p: 3, maxWidth: 720, mx: "auto", width: "100%" }}>
-        <RunPodStatusCard onReadyChange={setComfyReady} />
+        <RunPodStatusCard onReadyChange={setCanGenerate} />
 
         <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2 }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 600, color: "text.secondary", mb: 2 }}>
@@ -110,6 +117,18 @@ export default function AiVideo() {
               />
             </Box>
 
+            <Box>
+              <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>
+                Reference audio
+              </Typography>
+              <AudioUpload
+                label="Background music / rhythm track"
+                value={referenceAudio}
+                onChange={setReferenceAudio}
+                onRemove={() => setReferenceAudio(null)}
+              />
+            </Box>
+
             <TextField
               label="Prompt"
               multiline
@@ -118,7 +137,7 @@ export default function AiVideo() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Describe the motion and scene for your video…"
-              disabled={!comfyReady}
+              disabled={!canGenerate}
             />
 
             <TextField
@@ -128,8 +147,8 @@ export default function AiVideo() {
               value={lengthSeconds}
               onChange={(e) => setLengthSeconds(Math.max(1, Math.min(60, Number(e.target.value) || 5)))}
               inputProps={{ min: 1, max: 60 }}
-              disabled={!comfyReady}
-              helperText="1–60 seconds"
+              disabled={!canGenerate}
+              helperText="Maps to the workflow Duration node (1–60 seconds)"
             />
           </Stack>
         </Paper>

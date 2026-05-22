@@ -134,3 +134,32 @@ async def runpod_deploy():
     except Exception as e:
         logger.error("RunPod deploy failed: %s", e, exc_info=True)
         raise HTTPException(502, detail=f"RunPod deploy failed: {e}") from e
+
+
+@router.post("/install-models")
+async def runpod_install_models():
+    """Queue missing LTX models on the pod via ComfyUI-Manager (same as UI missing-models)."""
+    from backend.agents.job_helper import create_job
+    from backend.core.task_runner import run_install_runpod_models, dispatch
+
+    user_settings = await _get_user_settings()
+    api_key = get_runpod_api_key(user_settings)
+    if not api_key:
+        raise HTTPException(503, detail="RunPod API key not configured")
+
+    stored_pod_id = get_runpod_pod_id(user_settings)
+    status = await runpod_service.get_pod_status(api_key, stored_pod_id)
+    if not status.get("comfy_ready"):
+        raise HTTPException(503, detail="ComfyUI is not ready on the pod")
+    if status.get("models_ready"):
+        return {"message": "All required models are already present", "job_id": None}
+
+    job = await create_job("runpod_install_models", "local", {})
+    dispatch(run_install_runpod_models(job_id=job.id, user_id="local"))
+    return {
+        "job_id": job.id,
+        "message": (
+            "Model install queued via ComfyUI-Manager. "
+            "Large downloads may take 30+ minutes — refresh status when done."
+        ),
+    }

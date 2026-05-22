@@ -15,6 +15,7 @@ import httpx
 
 from backend.config import settings as app_settings
 from backend.runpod import pod_config
+from backend.services.runpod_models import check_models_present, fetch_comfy_model_lists
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,9 @@ async def create_pod(api_key: str) -> dict:
     }
     if getattr(pod_config, "TEMPLATE_ID", None):
         body["templateId"] = pod_config.TEMPLATE_ID
+    volume_id = (app_settings.RUNPOD_NETWORK_VOLUME_ID or "").strip()
+    if volume_id:
+        body["networkVolumeId"] = volume_id
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             f"{RUNPOD_REST_BASE}/pods",
@@ -142,6 +146,10 @@ async def get_pod_status(api_key: str, stored_pod_id: str = "") -> dict:
             "message": "Add your RunPod API key in Settings or .env",
             "can_deploy": False,
             "can_generate": False,
+            "can_install_models": False,
+            "models_ready": False,
+            "models_status": {"ready": False, "missing": [], "present": []},
+            "network_volume_attached": False,
             "cost_per_hr": None,
         }
 
@@ -151,6 +159,8 @@ async def get_pod_status(api_key: str, stored_pod_id: str = "") -> dict:
     desired = pod.get("desiredStatus") if pod else None
     comfy_url = get_comfy_base_url(pod_id) if pod_id else None
     comfy_ready = False
+    models_ready = False
+    models_status: dict = {"ready": False, "missing": [], "present": []}
     message = ""
 
     if pod_state == "none":
@@ -162,9 +172,28 @@ async def get_pod_status(api_key: str, stored_pod_id: str = "") -> dict:
     elif pod_state == "running":
         if comfy_url and await check_comfy_health(comfy_url):
             comfy_ready = True
-            message = "ComfyUI is ready. You can generate videos."
+            try:
+                lists = await fetch_comfy_model_lists(comfy_url)
+                models_status = check_models_present(lists)
+                models_ready = models_status["ready"]
+            except Exception as e:
+                logger.debug("Model check failed: %s", e)
+            if models_ready:
+                message = "ComfyUI and models are ready. You can generate videos."
+            else:
+                missing = [m["filename"] for m in models_status.get("missing", [])]
+                message = (
+                    "ComfyUI is up. Click Install models to download via ComfyUI-Manager "
+                    "(or attach a network volume that already has the LTX files)."
+                )
+                if missing:
+                    message += f" Missing: {', '.join(missing[:3])}"
+                    if len(missing) > 3:
+                        message += "…"
         else:
             message = "Pod is running. Waiting for ComfyUI to respond on port 8188…"
+
+    volume_attached = bool((app_settings.RUNPOD_NETWORK_VOLUME_ID or "").strip())
 
     return {
         "configured": True,
@@ -173,16 +202,24 @@ async def get_pod_status(api_key: str, stored_pod_id: str = "") -> dict:
         "pod_state": pod_state,
         "desired_status": desired,
         "comfy_ready": comfy_ready,
+        "models_ready": models_ready,
+        "models_status": models_status,
+        "network_volume_attached": volume_attached,
         "comfy_url": comfy_url,
         "message": message,
         "can_deploy": pod_state in ("none", "stopped"),
-        "can_generate": comfy_ready,
+        "can_generate": comfy_ready and models_ready,
+        "can_install_models": comfy_ready and not models_ready,
         "cost_per_hr": pod.get("costPerHr") if pod else None,
     }
 
 
 def load_workflow_template() -> dict:
-    path = WORKFLOWS_DIR / "runpod_img2vid.json"
+    mapping = load_workflow_mapping()
+    filename = mapping.get("workflow_file", "video_ltx2_3_ia2v-api.json")
+    path = WORKFLOWS_DIR / filename
+    if not path.exists():
+        raise FileNotFoundError(f"Workflow file not found: {path}")
     with open(path, encoding="utf-8") as f:
         raw = json.load(f)
     return {k: v for k, v in raw.items() if not str(k).startswith("_")}
@@ -202,12 +239,22 @@ def mapping_is_configured(mapping: dict) -> bool:
     return True
 
 
-def build_workflow(prompt: str, length_seconds: int, start_image_filename: str) -> dict:
+def build_workflow(
+    prompt: str,
+    length_seconds: int,
+    start_image_filename: str,
+    audio_filename: Optional[str] = None,
+) -> dict:
     mapping = load_workflow_mapping()
     if not mapping_is_configured(mapping):
         raise ValueError(
             "RunPod workflow mapping is not configured. "
             "Edit backend/workflows/runpod_mapping.json with your ComfyUI node IDs."
+        )
+
+    if mapping.get("audio_required") and not audio_filename:
+        raise ValueError(
+            "This workflow requires reference audio. Upload an audio file in the AI Video page."
         )
 
     workflow = copy.deepcopy(load_workflow_template())
@@ -219,12 +266,21 @@ def build_workflow(prompt: str, length_seconds: int, start_image_filename: str) 
     length_id = str(mapping["length_node_id"])
     length_key = mapping.get("length_input_key", "length")
     if length_id in workflow:
-        workflow[length_id]["inputs"][length_key] = length_seconds
+        workflow[length_id]["inputs"][length_key] = float(length_seconds)
 
-    start_name = mapping.get("start_image_filename", "start_frame.png")
-    for node in workflow.values():
-        if node.get("class_type") == "LoadImage":
-            node["inputs"]["image"] = start_image_filename or start_name
+    image_node_id = mapping.get("start_image_node_id")
+    image_key = mapping.get("start_image_input_key", "image")
+    if image_node_id and image_node_id in workflow:
+        workflow[image_node_id]["inputs"][image_key] = start_image_filename
+    else:
+        for node in workflow.values():
+            if node.get("class_type") == "LoadImage":
+                node["inputs"]["image"] = start_image_filename
+
+    audio_node_id = mapping.get("audio_node_id")
+    audio_key = mapping.get("audio_input_key", "audio")
+    if audio_filename and audio_node_id and audio_node_id in workflow:
+        workflow[audio_node_id]["inputs"][audio_key] = audio_filename
 
     return workflow
 
@@ -241,11 +297,11 @@ def resolve_media_path(media_url: str) -> Path:
     return path
 
 
-async def upload_image_to_comfy(base_url: str, image_path: Path) -> str:
-    """Upload image to ComfyUI input folder; returns filename for LoadImage node."""
-    async with httpx.AsyncClient(timeout=120) as client:
-        with open(image_path, "rb") as f:
-            files = {"image": (image_path.name, f, "application/octet-stream")}
+async def upload_file_to_comfy(base_url: str, file_path: Path) -> str:
+    """Upload image or audio to the ComfyUI input folder (saved under original filename)."""
+    async with httpx.AsyncClient(timeout=300) as client:
+        with open(file_path, "rb") as f:
+            files = {"image": (file_path.name, f, "application/octet-stream")}
             data = {"overwrite": "true"}
             resp = await client.post(
                 f"{base_url.rstrip('/')}/upload/image",
@@ -254,8 +310,15 @@ async def upload_image_to_comfy(base_url: str, image_path: Path) -> str:
             )
         resp.raise_for_status()
         result = resp.json()
-        name = result.get("name") or image_path.name
-        return name
+        return result.get("name") or file_path.name
+
+
+async def upload_image_to_comfy(base_url: str, image_path: Path) -> str:
+    return await upload_file_to_comfy(base_url, image_path)
+
+
+async def upload_audio_to_comfy(base_url: str, audio_path: Path) -> str:
+    return await upload_file_to_comfy(base_url, audio_path)
 
 
 async def submit_comfy_workflow(base_url: str, workflow: dict) -> str:
@@ -327,6 +390,7 @@ async def run_comfy_img2vid(
     start_image_path: Path,
     length_seconds: int,
     output_path: Path,
+    audio_path: Optional[Path] = None,
     on_progress: Optional[Callable[[float, str], Awaitable[None]]] = None,
 ) -> Path:
     """Full pipeline: upload image → build workflow → prompt → download video."""
@@ -334,7 +398,12 @@ async def run_comfy_img2vid(
         await on_progress(10, "Uploading start image to ComfyUI…")
 
     uploaded_name = await upload_image_to_comfy(base_url, start_image_path)
-    workflow = build_workflow(prompt, length_seconds, uploaded_name)
+    if not audio_path or not audio_path.exists():
+        raise ValueError("Reference audio file is missing")
+    if on_progress:
+        await on_progress(15, "Uploading reference audio to ComfyUI…")
+    audio_name = await upload_audio_to_comfy(base_url, audio_path)
+    workflow = build_workflow(prompt, length_seconds, uploaded_name, audio_name)
 
     if on_progress:
         await on_progress(20, "Submitting workflow…")

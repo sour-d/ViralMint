@@ -1050,10 +1050,70 @@ async def run_news_save(
         await update_job_status(job_id, "failed", error_message=str(e))
 
 
+async def run_install_runpod_models(
+    job_id: str,
+    user_id: str = "local",
+):
+    """Queue model downloads on the pod via ComfyUI-Manager (when installed)."""
+    from backend.agents.job_helper import update_job_status
+    from backend.core.ws_manager import ws_manager
+    from backend.core.api_keys import get_runpod_api_key, get_runpod_pod_id
+    from backend.services import runpod_service
+    from backend.services.runpod_models import install_missing_models
+    from backend.models.user_settings import UserSettings
+    from backend.database import AsyncSessionLocal
+    from sqlalchemy import select
+
+    try:
+        await ws_manager.send({
+            "type": "job_started",
+            "job_id": job_id,
+            "job_type": "runpod_install_models",
+            "message": "Installing ComfyUI models…",
+        }, user_id)
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(UserSettings).where(UserSettings.user_id == user_id)
+            )
+            user_settings = result.scalar_one_or_none()
+
+        api_key = get_runpod_api_key(user_settings)
+        stored_pod_id = get_runpod_pod_id(user_settings)
+        status = await runpod_service.get_pod_status(api_key, stored_pod_id)
+        if not status.get("comfy_ready"):
+            raise RuntimeError("ComfyUI is not ready on the pod")
+
+        base_url = runpod_service.get_comfy_base_url(status["pod_id"])
+        await update_job_status(job_id, "running", progress_pct=5, current_step="Checking models…")
+
+        async def on_progress(pct, step):
+            await update_job_status(job_id, "running", progress_pct=pct, current_step=step)
+            await ws_manager.send_progress(job_id, pct, step, user_id)
+
+        result = await install_missing_models(base_url, on_progress=on_progress)
+        await update_job_status(
+            job_id, "success",
+            progress_pct=100,
+            current_step=result.get("message", "Done"),
+            output_data=result,
+        )
+        await ws_manager.send({
+            "type": "job_complete",
+            "job_id": job_id,
+            "result": result,
+        }, user_id)
+    except Exception as e:
+        from backend.agents.job_helper import update_job_status as _update
+        await _update(job_id, "failed", error_message=str(e))
+        await ws_manager.send({"type": "job_failed", "job_id": job_id, "error": str(e)}, user_id)
+
+
 async def run_runpod_generate(
     job_id: str,
     prompt: str,
     start_image: str,
+    reference_audio: str,
     length_seconds: int = 5,
     user_id: str = "local",
 ):
@@ -1093,6 +1153,7 @@ async def run_runpod_generate(
         pod_id = status["pod_id"]
         base_url = runpod_service.get_comfy_base_url(pod_id)
         image_path = runpod_service.resolve_media_path(start_image)
+        audio_path = runpod_service.resolve_media_path(reference_audio)
 
         await update_job_status(job_id, "running", progress_pct=0, current_step="Connecting to ComfyUI…")
 
@@ -1110,6 +1171,7 @@ async def run_runpod_generate(
             start_image_path=image_path,
             length_seconds=length_seconds,
             output_path=output_path,
+            audio_path=audio_path,
             on_progress=on_progress,
         )
 

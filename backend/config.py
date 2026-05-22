@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     TIKHUB_API_KEY: str = ""            # TikTok / Douyin scout (alternative: cookies in Settings)
     PEXELS_API_KEY: str = ""            # Stock video footage
     RUNPOD_API_KEY: str = ""            # RunPod GPU Pod + ComfyUI (AI Video)
+    RUNPOD_NETWORK_VOLUME_ID: str = ""  # Optional: persist models across pods (paid volume)
+    RUNPOD_HF_TOKEN: str = ""           # Optional: gated HuggingFace downloads on the pod
 
     # ── Upload OAuth ──────────────────────────────────
     YOUTUBE_CLIENT_ID: str = ""

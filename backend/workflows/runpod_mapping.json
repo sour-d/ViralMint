@@ -1,7 +1,13 @@
 {
-  "start_image_filename": "start_frame.png",
-  "prompt_node_id": "REPLACE_ME",
-  "prompt_input_key": "text",
-  "length_node_id": "REPLACE_ME",
-  "length_input_key": "length"
+  "workflow_file": "video_ltx2_3_ia2v-api.json",
+  "start_image_node_id": "269",
+  "start_image_input_key": "image",
+  "prompt_node_id": "340:319",
+  "prompt_input_key": "value",
+  "length_node_id": "340:331",
+  "length_input_key": "value",
+  "audio_node_id": "276",
+  "audio_input_key": "audio",
+  "audio_required": true,
+  "save_video_node_id": "341"
 }
