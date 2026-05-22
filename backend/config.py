@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     RUNPOD_API_KEY: str = ""            # RunPod GPU Pod + ComfyUI (AI Video)
     RUNPOD_NETWORK_VOLUME_ID: str = ""  # Optional: persist models across pods (paid volume)
     RUNPOD_HF_TOKEN: str = ""           # Optional: gated HuggingFace downloads on the pod
+    RUNPOD_FREE_MEMORY_AFTER_GENERATE: bool = True  # POST ComfyUI /free after each AI video job
 
     # ── Upload OAuth ──────────────────────────────────
     YOUTUBE_CLIENT_ID: str = ""

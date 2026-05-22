@@ -457,12 +457,32 @@ async def download_comfy_output(base_url: str, item: dict, dest: Path) -> Path:
         "subfolder": item.get("subfolder", ""),
         "type": item.get("type", "output"),
     }
+    dest.parent.mkdir(parents=True, exist_ok=True)
     async with httpx.AsyncClient(timeout=300) as client:
-        resp = await client.get(f"{base_url.rstrip('/')}/view", params=params)
-        resp.raise_for_status()
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(resp.content)
+        async with client.stream(
+            "GET", f"{base_url.rstrip('/')}/view", params=params
+        ) as resp:
+            resp.raise_for_status()
+            with dest.open("wb") as out:
+                async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
+                    out.write(chunk)
     return dest
+
+
+async def free_comfy_memory(base_url: str) -> bool:
+    """Unload models and clear ComfyUI execution cache on the pod (frees GPU VRAM)."""
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{base_url.rstrip('/')}/free",
+                json={"unload_models": True, "free_memory": True},
+            )
+            resp.raise_for_status()
+        logger.info("DEBUG:: ComfyUI /free completed (unload_models + free_memory)")
+        return True
+    except Exception as e:
+        logger.warning("ComfyUI /free failed — pod may still hold GPU memory: %s", e)
+        return False
 
 
 async def run_comfy_img2vid(
@@ -494,4 +514,10 @@ async def run_comfy_img2vid(
 
     if on_progress:
         await on_progress(90, "Downloading output…")
-    return await download_comfy_output(base_url, result["item"], output_path)
+    try:
+        return await download_comfy_output(base_url, result["item"], output_path)
+    finally:
+        if app_settings.RUNPOD_FREE_MEMORY_AFTER_GENERATE:
+            if on_progress:
+                await on_progress(95, "Releasing GPU memory on pod…")
+            await free_comfy_memory(base_url)

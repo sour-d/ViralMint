@@ -9,6 +9,7 @@ import OpenInNewIcon from "@mui/icons-material/OpenInNew"
 import PlayArrowIcon from "@mui/icons-material/PlayArrow"
 import DownloadIcon from "@mui/icons-material/Download"
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline"
+import MemoryIcon from "@mui/icons-material/Memory"
 import http from "../../api/http"
 import useAppStore from "../../store/appStore"
 
@@ -147,6 +148,18 @@ export default function RunPodStatusCard({ onReadyChange }) {
     }
   }
 
+  const handleFreeMemory = async () => {
+    setBusy("free")
+    try {
+      const { data } = await http.post("/api/runpod/free-memory")
+      showSnackbar(data.message || "GPU memory released on pod", "success")
+    } catch (err) {
+      showSnackbar(err.response?.data?.detail || err.message, "error")
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const handleCleanup = async () => {
     const ok = window.confirm(
       "Remove LTX workflow setup from this pod?\n\n"
@@ -278,6 +291,18 @@ export default function RunPodStatusCard({ onReadyChange }) {
               {busy === "setup" ? "Starting…" : "Setup pod"}
             </Button>
           )}
+          {status?.can_generate && (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={busy === "free" ? <CircularProgress size={16} /> : <MemoryIcon />}
+              onClick={handleFreeMemory}
+              disabled={!!busy}
+              title="Unload LTX models from GPU VRAM (ComfyUI /free)"
+            >
+              {busy === "free" ? "Freeing…" : "Free GPU memory"}
+            </Button>
+          )}
           {status?.can_cleanup && (
             <Button
               size="small"
@@ -321,6 +346,7 @@ export default function RunPodStatusCard({ onReadyChange }) {
       {status?.comfy_ready && status?.can_generate && !setupJob && (
         <Alert severity="success" sx={{ mt: 2 }}>
           Pod is ready. Setup will not re-download models or reinstall nodes unless something is missing.
+          After each AI video, GPU memory is released automatically; use <strong>Free GPU memory</strong> if usage stays high.
         </Alert>
       )}
     </Paper>

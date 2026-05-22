@@ -171,6 +171,26 @@ async def runpod_setup():
     }
 
 
+@router.post("/free-memory")
+async def runpod_free_memory():
+    """Unload ComfyUI models and clear execution cache on the pod (frees GPU VRAM)."""
+    user_settings = await _get_user_settings()
+    api_key = get_runpod_api_key(user_settings)
+    if not api_key:
+        raise HTTPException(503, detail="RunPod API key not configured")
+
+    stored_pod_id = get_runpod_pod_id(user_settings)
+    status = await runpod_service.get_pod_status(api_key, stored_pod_id)
+    if not status.get("comfy_ready"):
+        raise HTTPException(503, detail="ComfyUI is not ready on the pod")
+
+    base_url = runpod_service.get_comfy_base_url(status["pod_id"])
+    ok = await runpod_service.free_comfy_memory(base_url)
+    if not ok:
+        raise HTTPException(502, detail="ComfyUI /free failed — check pod logs")
+    return {"ok": True, "message": "GPU memory released on pod (models unloaded until next generate)."}
+
+
 @router.post("/cleanup")
 async def runpod_cleanup(body: dict = Body(default_factory=dict)):
     """
