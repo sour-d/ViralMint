@@ -94,7 +94,7 @@ export default function AiVideo() {
         </Button>
       </Box>
 
-      <ActiveJobsBanner filter={(j) => j.jobType === "runpod_generate" || j.jobType === "runpod_install_models"} />
+      <ActiveJobsBanner filter={(j) => j.jobType === "runpod_generate"} />
 
       <Box sx={{ flex: 1, overflow: "auto", p: 3, maxWidth: 720, mx: "auto", width: "100%" }}>
         <RunPodStatusCard onReadyChange={setCanGenerate} />

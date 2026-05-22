@@ -1054,12 +1054,12 @@ async def run_install_runpod_models(
     job_id: str,
     user_id: str = "local",
 ):
-    """Queue model downloads on the pod via ComfyUI-Manager (when installed)."""
+    """Queue custom nodes + model downloads on the pod via ComfyUI-Manager."""
     from backend.agents.job_helper import update_job_status
     from backend.core.ws_manager import ws_manager
     from backend.core.api_keys import get_runpod_api_key, get_runpod_pod_id
     from backend.services import runpod_service
-    from backend.services.runpod_models import install_missing_models
+    from backend.services.runpod_setup import setup_pod
     from backend.models.user_settings import UserSettings
     from backend.database import AsyncSessionLocal
     from sqlalchemy import select
@@ -1069,7 +1069,7 @@ async def run_install_runpod_models(
             "type": "job_started",
             "job_id": job_id,
             "job_type": "runpod_install_models",
-            "message": "Installing ComfyUI models…",
+            "message": "Setting up ComfyUI (custom nodes + models)…",
         }, user_id)
 
         async with AsyncSessionLocal() as db:
@@ -1085,13 +1085,11 @@ async def run_install_runpod_models(
             raise RuntimeError("ComfyUI is not ready on the pod")
 
         base_url = runpod_service.get_comfy_base_url(status["pod_id"])
-        await update_job_status(job_id, "running", progress_pct=5, current_step="Checking models…")
-
         async def on_progress(pct, step):
             await update_job_status(job_id, "running", progress_pct=pct, current_step=step)
             await ws_manager.send_progress(job_id, pct, step, user_id)
 
-        result = await install_missing_models(base_url, on_progress=on_progress)
+        result = await setup_pod(base_url, on_progress=on_progress)
         await update_job_status(
             job_id, "success",
             progress_pct=100,

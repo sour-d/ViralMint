@@ -7,11 +7,12 @@
 | `video_ltx2_3_ia2v-api.json` | API workflow — sent to ComfyUI `POST /prompt` |
 | `video_ltx2_3_ia2v.json` | UI export — edit in ComfyUI only |
 | `runpod_mapping.json` | Runtime patches (prompt, duration, image, audio) |
-| `../runpod/models_manifest.json` | Models to install via `POST /api/runpod/install-models` |
+| `../runpod/models_manifest.json` | Model files for ComfyUI-Manager |
+| `../runpod/custom_nodes_manifest.json` | Custom node packs (LTXVideo, ComfyMath) |
 
-## Models
+## Setup (from the app)
 
-After the pod shows **ComfyUI up**, click **Install models** on the AI Video page. That queues downloads on the pod through ComfyUI-Manager (`POST /manager/queue/install_model`), same as the missing-models dialog in the ComfyUI UI.
+After **ComfyUI up**, click **Setup pod** (`POST /api/runpod/setup`). Backend code lives in `backend/services/runpod_setup.py` and talks to ComfyUI-Manager on the pod (install node packs, then models, start queue).
 
 Optional `.env`:
 

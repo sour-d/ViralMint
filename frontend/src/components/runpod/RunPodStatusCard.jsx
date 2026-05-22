@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { Link as RouterLink } from "react-router-dom"
 import {
   Box, Stack, Typography, Button, Chip, Paper, CircularProgress, Link, Alert,
+  LinearProgress,
 } from "@mui/material"
 import CloudQueueIcon from "@mui/icons-material/CloudQueue"
 import OpenInNewIcon from "@mui/icons-material/OpenInNew"
@@ -10,7 +11,9 @@ import DownloadIcon from "@mui/icons-material/Download"
 import http from "../../api/http"
 import useAppStore from "../../store/appStore"
 
-const POLL_MS = 5000
+const SETUP_JOB_TYPE = "runpod_install_models"
+const POLL_IDLE_MS = 8000
+const POLL_ACTIVE_MS = 2500
 
 const STATE_COLORS = {
   none: "default",
@@ -30,10 +33,18 @@ const STATE_LABELS = {
 
 export default function RunPodStatusCard({ onReadyChange }) {
   const showSnackbar = useAppStore((s) => s.showSnackbar)
+  const startJob = useAppStore((s) => s.startJob)
+  const activeJobs = useAppStore((s) => s.activeJobs)
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [deploying, setDeploying] = useState(false)
-  const [installing, setInstalling] = useState(false)
+  const [busy, setBusy] = useState(null)
+
+  const setupJob = useMemo(
+    () => Object.values(activeJobs).find(
+      (j) => j.jobType === SETUP_JOB_TYPE && j.status === "running",
+    ),
+    [activeJobs],
+  )
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -41,10 +52,12 @@ export default function RunPodStatusCard({ onReadyChange }) {
       setStatus(data)
       onReadyChange?.(!!data.can_generate)
     } catch (err) {
+      const detail = err.response?.data?.detail || err.message
       setStatus({
         configured: false,
         pod_state: "error",
-        message: err.response?.data?.detail || err.message,
+        message: detail,
+        activity_line: detail,
         can_deploy: false,
         can_generate: false,
       })
@@ -58,18 +71,32 @@ export default function RunPodStatusCard({ onReadyChange }) {
     fetchStatus()
   }, [fetchStatus])
 
+  const isActive = Boolean(
+    busy || setupJob || status?.setup_in_progress || status?.pod_state === "starting",
+  )
+
   useEffect(() => {
-    const shouldPoll = status && (
-      status.pod_state === "starting"
-      || (status.comfy_ready && !status.models_ready)
-    )
-    if (!shouldPoll) return undefined
-    const id = setInterval(fetchStatus, POLL_MS)
+    if (!status) return undefined
+    const ms = isActive ? POLL_ACTIVE_MS : POLL_IDLE_MS
+    const id = setInterval(fetchStatus, ms)
     return () => clearInterval(id)
-  }, [status, fetchStatus])
+  }, [status, isActive, fetchStatus])
+
+  const activityLine = useMemo(() => {
+    if (busy === "deploy") return "Deploying RunPod GPU pod…"
+    if (busy === "setup") return "Starting pod setup…"
+    if (setupJob?.step) {
+      const pct = setupJob.percent
+      return pct > 0 ? `${setupJob.step} (${Math.round(pct)}%)` : setupJob.step
+    }
+    return status?.activity_line || status?.message || (loading ? "Checking RunPod status…" : "")
+  }, [busy, setupJob, status, loading])
+
+  const progressPct = setupJob?.percent ?? status?.setup_job?.progress_pct ?? 0
+  const showProgress = Boolean(setupJob || status?.setup_job || busy === "setup")
 
   const handleDeploy = async () => {
-    setDeploying(true)
+    setBusy("deploy")
     try {
       const { data } = await http.post("/api/runpod/deploy")
       showSnackbar(data.message || "Pod deployment started", "success")
@@ -77,33 +104,34 @@ export default function RunPodStatusCard({ onReadyChange }) {
     } catch (err) {
       showSnackbar(err.response?.data?.detail || err.message, "error")
     } finally {
-      setDeploying(false)
+      setBusy(null)
     }
   }
 
-  const handleInstallModels = async () => {
-    setInstalling(true)
+  const handleSetup = async () => {
+    setBusy("setup")
     try {
-      const { data } = await http.post("/api/runpod/install-models")
-      showSnackbar(data.message || "Model install started", "info")
+      const { data } = await http.post("/api/runpod/setup")
+      if (data.job_id) {
+        startJob(data.job_id, SETUP_JOB_TYPE, data.message || "Setting up pod…")
+      }
+      showSnackbar(data.message || "Setup started", "info")
       await fetchStatus()
     } catch (err) {
       showSnackbar(err.response?.data?.detail || err.message, "error")
     } finally {
-      setInstalling(false)
+      setBusy(null)
     }
   }
 
   const podState = status?.pod_state || "none"
-  const showDeploy = status?.can_deploy && !status?.comfy_ready
-  const showInstallModels = status?.can_install_models
 
   return (
     <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2, mb: 2 }}>
       <Stack direction="row" spacing={1.5} alignItems="flex-start" justifyContent="space-between">
         <Stack direction="row" spacing={1.5} alignItems="center" sx={{ flex: 1, minWidth: 0 }}>
           <CloudQueueIcon sx={{ color: "primary.main", fontSize: 28 }} />
-          <Box sx={{ minWidth: 0 }}>
+          <Box sx={{ minWidth: 0, flex: 1 }}>
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
               <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                 RunPod ComfyUI
@@ -121,6 +149,9 @@ export default function RunPodStatusCard({ onReadyChange }) {
               {status?.comfy_ready && (
                 <Chip size="small" label="ComfyUI up" color="info" variant="outlined" />
               )}
+              {status?.custom_nodes_ready && (
+                <Chip size="small" label="Nodes ready" color="success" variant="outlined" />
+              )}
               {status?.models_ready && (
                 <Chip size="small" label="Models ready" color="success" />
               )}
@@ -128,13 +159,50 @@ export default function RunPodStatusCard({ onReadyChange }) {
                 <Chip size="small" label="Ready to generate" color="success" variant="outlined" />
               )}
             </Stack>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              {status?.message || "Checking RunPod status…"}
-            </Typography>
-            {status?.cost_per_hr && (
-              <Typography variant="caption" color="text.secondary" display="block">
-                ~${status.cost_per_hr}/hr while running
-              </Typography>
+
+            {activityLine && (
+              <Box
+                sx={{
+                  mt: 1.5,
+                  px: 1.25,
+                  py: 0.75,
+                  borderRadius: 1,
+                  bgcolor: (t) => (t.palette.mode === "dark"
+                    ? "rgba(255,255,255,0.06)"
+                    : "rgba(0,0,0,0.04)"),
+                  border: 1,
+                  borderColor: "divider",
+                }}
+              >
+                <Stack direction="row" spacing={1} alignItems="center">
+                  {isActive && (
+                    <CircularProgress size={12} thickness={5} sx={{ flexShrink: 0 }} />
+                  )}
+                  <Typography
+                    variant="caption"
+                    component="div"
+                    sx={{
+                      fontFamily: "monospace",
+                      fontSize: "0.75rem",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                    title={activityLine}
+                  >
+                    {activityLine}
+                  </Typography>
+                </Stack>
+                {showProgress && (
+                  <LinearProgress
+                    variant={progressPct > 0 ? "determinate" : "indeterminate"}
+                    value={progressPct > 0 ? progressPct : undefined}
+                    sx={{ mt: 0.75, height: 3, borderRadius: 2 }}
+                  />
+                )}
+              </Box>
             )}
           </Box>
         </Stack>
@@ -152,38 +220,30 @@ export default function RunPodStatusCard({ onReadyChange }) {
               Open ComfyUI
             </Button>
           )}
-          {showInstallModels && (
+          {status?.can_setup && (
             <Button
               size="small"
               variant="outlined"
-              startIcon={installing ? <CircularProgress size={16} /> : <DownloadIcon />}
-              onClick={handleInstallModels}
-              disabled={installing}
+              startIcon={busy === "setup" ? <CircularProgress size={16} /> : <DownloadIcon />}
+              onClick={handleSetup}
+              disabled={!!busy}
             >
-              {installing ? "Starting…" : "Install models"}
+              {busy === "setup" ? "Starting…" : "Setup pod"}
             </Button>
           )}
-          {showDeploy && (
+          {status?.can_deploy && !status?.comfy_ready && (
             <Button
               size="small"
               variant="contained"
-              startIcon={deploying ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
+              startIcon={busy === "deploy" ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
               onClick={handleDeploy}
-              disabled={deploying || !status?.configured}
+              disabled={!!busy || !status?.configured}
             >
-              {deploying ? "Deploying…" : "Deploy Pod"}
+              {busy === "deploy" ? "Deploying…" : "Deploy Pod"}
             </Button>
           )}
         </Stack>
       </Stack>
-
-      {status?.comfy_ready && !status?.models_ready && (
-        <Alert severity="info" sx={{ mt: 2 }}>
-          Click <strong>Install models</strong> to download via ComfyUI-Manager (same as importing
-          the workflow in ComfyUI and accepting the missing-models prompt). Large files can take
-          30–90+ minutes — refresh until &quot;Models ready&quot; appears.
-        </Alert>
-      )}
 
       {!status?.configured && !loading && (
         <Alert severity="info" sx={{ mt: 2 }}>
@@ -193,10 +253,9 @@ export default function RunPodStatusCard({ onReadyChange }) {
         </Alert>
       )}
 
-      {status?.models_status?.missing?.length > 0 && status.comfy_ready && !status.models_ready && (
+      {status?.comfy_ready && status?.can_setup && !setupJob && (
         <Alert severity="info" sx={{ mt: 2 }}>
-          Missing on pod:{" "}
-          {status.models_status.missing.map((m) => m.filename).join(", ")}
+          Run <strong>Setup pod</strong> once per pod. Restart ComfyUI after custom nodes finish installing.
         </Alert>
       )}
     </Paper>

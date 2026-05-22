@@ -136,9 +136,10 @@ async def runpod_deploy():
         raise HTTPException(502, detail=f"RunPod deploy failed: {e}") from e
 
 
+@router.post("/setup")
 @router.post("/install-models")
-async def runpod_install_models():
-    """Queue missing LTX models on the pod via ComfyUI-Manager (same as UI missing-models)."""
+async def runpod_setup():
+    """Queue missing custom nodes and LTX models on the pod via ComfyUI-Manager."""
     from backend.agents.job_helper import create_job
     from backend.core.task_runner import run_install_runpod_models, dispatch
 
@@ -151,15 +152,16 @@ async def runpod_install_models():
     status = await runpod_service.get_pod_status(api_key, stored_pod_id)
     if not status.get("comfy_ready"):
         raise HTTPException(503, detail="ComfyUI is not ready on the pod")
-    if status.get("models_ready"):
-        return {"message": "All required models are already present", "job_id": None}
+    if status.get("can_generate"):
+        return {"message": "Pod is already set up", "job_id": None}
 
     job = await create_job("runpod_install_models", "local", {})
     dispatch(run_install_runpod_models(job_id=job.id, user_id="local"))
     return {
         "job_id": job.id,
         "message": (
-            "Model install queued via ComfyUI-Manager. "
-            "Large downloads may take 30+ minutes — refresh status when done."
+            "Setup queued via ComfyUI-Manager (custom nodes, then models). "
+            "Restart ComfyUI on the pod after node installs finish. "
+            "Large model downloads may take 30–90+ minutes."
         ),
     }

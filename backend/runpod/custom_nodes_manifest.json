@@ -1,0 +1,27 @@
+{
+  "description": "Custom node packs for video_ltx2_3_ia2v-api.json — installed via ComfyUI-Manager POST /manager/queue/install.",
+  "packs": [
+    {
+      "id": "comfyui-ltxvideo",
+      "title": "ComfyUI-LTXVideo",
+      "name": "ComfyUI-LTXVideo",
+      "author": "lightricks",
+      "reference": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "files": ["https://github.com/Lightricks/ComfyUI-LTXVideo"],
+      "install_type": "git-clone",
+      "description": "LTX 2.3 video nodes (LTXV*, TextGenerateLTX2Prompt, etc.)",
+      "class_type_prefixes": ["LTXV", "LTXAV", "TextGenerateLTX", "EmptyLTXV"]
+    },
+    {
+      "id": "comfymath",
+      "title": "ComfyMath",
+      "name": "ComfyMath",
+      "author": "evanspearman",
+      "reference": "https://github.com/evanspearman/ComfyMath",
+      "files": ["https://github.com/evanspearman/ComfyMath"],
+      "install_type": "git-clone",
+      "description": "ComfyMathExpression nodes for resolution/duration math",
+      "class_types": ["ComfyMathExpression"]
+    }
+  ]
+}
