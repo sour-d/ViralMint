@@ -2,6 +2,17 @@
   "description": "Custom node packs for video_ltx2_3_ia2v-api.json — installed via ComfyUI-Manager POST /manager/queue/install.",
   "packs": [
     {
+      "id": "viralmint-runpod-bootstrap",
+      "title": "ViralMint RunPod Bootstrap",
+      "name": "ViralMint",
+      "author": "viralmint",
+      "reference": "https://github.com/sour-d/ViralMint",
+      "files": ["https://github.com/sour-d/ViralMint"],
+      "install_type": "git-clone",
+      "description": "Registers LTX models in Manager and downloads them on the pod (install.py + wget)",
+      "class_type_prefixes": []
+    },
+    {
       "id": "comfyui-ltxvideo",
       "title": "ComfyUI-LTXVideo",
       "name": "ComfyUI-LTXVideo",
