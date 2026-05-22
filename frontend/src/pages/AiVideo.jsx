@@ -48,7 +48,7 @@ export default function AiVideo() {
         prompt: prompt.trim(),
         start_image: startImage,
         reference_audio: referenceAudio,
-        length_seconds: lengthSeconds,
+        length_seconds: Math.min(60, Math.max(1, Number(lengthSeconds) || 5)),
       })
       startJob(data.job_id, "runpod_generate", "Generating AI video on RunPod…")
       showSnackbar("AI video generation started!", "success")
@@ -137,7 +137,6 @@ export default function AiVideo() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Describe the motion and scene for your video…"
-              disabled={!canGenerate}
             />
 
             <TextField
@@ -145,9 +144,26 @@ export default function AiVideo() {
               type="number"
               fullWidth
               value={lengthSeconds}
-              onChange={(e) => setLengthSeconds(Math.max(1, Math.min(60, Number(e.target.value) || 5)))}
-              inputProps={{ min: 1, max: 60 }}
-              disabled={!canGenerate}
+              onChange={(e) => {
+                const raw = e.target.value
+                if (raw === "") {
+                  setLengthSeconds("")
+                  return
+                }
+                const n = Number(raw)
+                if (!Number.isNaN(n)) {
+                  setLengthSeconds(n)
+                }
+              }}
+              onBlur={() => {
+                const n = Number(lengthSeconds)
+                if (!Number.isFinite(n) || n < 1) {
+                  setLengthSeconds(5)
+                } else {
+                  setLengthSeconds(Math.min(60, Math.max(1, Math.round(n))))
+                }
+              }}
+              inputProps={{ min: 1, max: 60, step: 1 }}
               helperText="Maps to the workflow Duration node (1–60 seconds)"
             />
           </Stack>

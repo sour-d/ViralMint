@@ -221,10 +221,18 @@ export default function GeneratedDetail({ video, onUpload, onDelete, onClose, on
             {/* Meta chips */}
             <Stack direction="row" spacing={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
               <Chip
-                label={video.source_type === "clip_extraction" ? "Clip" : "Stock"}
-                size="small" variant={video.source_type === "clip_extraction" ? "filled" : "outlined"}
-                color={video.source_type === "clip_extraction" ? "secondary" : "default"}
-                icon={video.source_type === "clip_extraction" ? <ContentCutIcon /> : undefined} />
+                label={
+                  video.source_type === "clip_extraction"
+                    ? "Clip"
+                    : video.source_type === "runpod_comfyui"
+                      ? "RunPod"
+                      : "Stock"
+                }
+                size="small"
+                variant={video.source_type === "clip_extraction" || video.source_type === "runpod_comfyui" ? "filled" : "outlined"}
+                color={video.source_type === "clip_extraction" ? "secondary" : video.source_type === "runpod_comfyui" ? "primary" : "default"}
+                icon={video.source_type === "clip_extraction" ? <ContentCutIcon /> : undefined}
+              />
               <Chip label={video.aspect_ratio} size="small" variant="outlined" />
               {video.duration_seconds && (
                 <Chip icon={<AccessTimeIcon />} label={`${Math.floor(video.duration_seconds / 60)}m${video.duration_seconds % 60}s`}

@@ -55,11 +55,11 @@ Built-in core (no pack): `ResizeImageMaskNode`, `ResizeImagesByLongerEdge`, `Tri
 
 ## Setup job flow (`setup_pod`)
 
-1. `manager_available()` probe
-2. `_setup_nodes()` — compare `object_info` vs workflow class types → queue `install` for missing packs → `queue_start`
-3. `_setup_models()` — compare `/models` vs manifest → queue `install_model` → `queue_start`
+1. `_setup_models()` — `POST /download_model` per missing file (workflow URLs + manifest)
+2. `_setup_nodes()` — Manager `queue/install` for missing packs → `queue_start`
+3. Manager `install_model` fallback only if ComfyUI download endpoint missing
 
-Returns `{ ok, message, custom_nodes: {...}, models: {...} }`.
+Returns `{ ok, message, custom_nodes, models }`.
 
 ## Generate flow (`run_comfy_img2vid`)
 
@@ -105,6 +105,16 @@ Defaults remain from export unless mapping extended:
 
 - [ ] Confirm checkpoint HF URL matches working repo (`LTX-2.3` vs `LTX-2.3-fp8`)
 - [ ] Strip placeholder filenames from API export when re-saving workflow
+
+## Troubleshooting model install
+
+| Symptom | Cause | Fix |
+|---------|--------|-----|
+| `KeyError: 'base'` in Manager `install_model` | Payload missing `base` (new Manager) | Use updated ViralMint; manifest includes `base` |
+| `A security error has occurred` (403) on Setup | `security_level` is `strong` | On pod: `security_level = normal` or `weak` in `user/__manager/config.ini`, restart ComfyUI |
+| Model download 403 | `Comfy.ModelDownloadEnabled` off on pod | Setup enables it automatically; enable in ComfyUI settings if still blocked |
+| `Invalid model install request` (400) | Manager fallback only; Comfy download failed | Check pod has `/download_model`; verify HF URLs in manifest |
+| Disk flat after Deploy only | Deploy ≠ Setup | Click **Setup pod** |
 
 ## Anti-patterns (rejected in this project)
 

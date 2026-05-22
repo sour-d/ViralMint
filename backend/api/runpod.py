@@ -3,7 +3,7 @@
 """REST /api/runpod — RunPod Pod status and deploy."""
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from sqlalchemy import select
 
 from backend.database import AsyncSessionLocal
@@ -153,15 +153,55 @@ async def runpod_setup():
     if not status.get("comfy_ready"):
         raise HTTPException(503, detail="ComfyUI is not ready on the pod")
     if status.get("can_generate"):
-        return {"message": "Pod is already set up", "job_id": None}
+        return {
+            "message": "Pod is already set up — nothing to download or install.",
+            "job_id": None,
+            "skipped": True,
+        }
 
     job = await create_job("runpod_install_models", "local", {})
     dispatch(run_install_runpod_models(job_id=job.id, user_id="local"))
     return {
         "job_id": job.id,
         "message": (
-            "Setup queued via ComfyUI-Manager (custom nodes, then models). "
-            "Restart ComfyUI on the pod after node installs finish. "
-            "Large model downloads may take 30–90+ minutes."
+            "Setup started: models download via ComfyUI (same as Download to Pod), "
+            "custom nodes via ComfyUI-Manager. Restart ComfyUI after node installs. "
+            "Large models may take 30–90+ minutes."
         ),
     }
+
+
+@router.post("/cleanup")
+async def runpod_cleanup(body: dict = Body(default_factory=dict)):
+    """
+    Uninstall LTX workflow custom nodes via Manager; return model file paths to delete manually.
+    Requires body: {"confirm": "REMOVE_LTX"}.
+    """
+    from backend.services.runpod_setup import cleanup_pod
+
+    payload = body or {}
+    if payload.get("confirm") != "REMOVE_LTX":
+        raise HTTPException(
+            400,
+            detail='Send {"confirm": "REMOVE_LTX"} to confirm removal of LTX workflow setup.',
+        )
+
+    user_settings = await _get_user_settings()
+    api_key = get_runpod_api_key(user_settings)
+    if not api_key:
+        raise HTTPException(503, detail="RunPod API key not configured")
+
+    stored_pod_id = get_runpod_pod_id(user_settings)
+    status = await runpod_service.get_pod_status(api_key, stored_pod_id)
+    if not status.get("comfy_ready"):
+        raise HTTPException(503, detail="ComfyUI is not ready on the pod")
+
+    base_url = runpod_service.get_comfy_base_url(status["pod_id"])
+    result = await cleanup_pod(
+        base_url,
+        remove_models=payload.get("remove_models", True),
+        remove_nodes=payload.get("remove_nodes", True),
+    )
+    if not result.get("ok"):
+        raise HTTPException(502, detail=result.get("message", "Cleanup failed"))
+    return result

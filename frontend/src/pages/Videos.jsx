@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from "react"
+import { useState, useEffect, useCallback, useRef, Fragment } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import {
   Box, Typography, Tabs, Tab, Button, Chip, Stack, Paper, IconButton,
@@ -44,6 +44,7 @@ export default function Videos() {
   const [searchParams] = useSearchParams()
   const showSnackbar = useAppStore((s) => s.showSnackbar)
   const removeJob = useAppStore((s) => s.removeJob)
+  const activeJobs = useAppStore((s) => s.activeJobs)
   const { jobs, jobTotal, fetchJobs } = useJobs(5000)
 
   // Tab: 0=Scout Results, 1=Downloaded, 2=Generated, 3=Job History
@@ -123,6 +124,20 @@ export default function Videos() {
     const downloadJobs = jobs.filter(j => j.job_type === "download" && j.status === "success")
     if (downloadJobs.length > 0) fetchDownloaded(dlPage * dlRowsPerPage, dlRowsPerPage)
   }, [jobs])
+
+  const prevRunpodJobStatus = useRef(null)
+  useEffect(() => {
+    const runpodJob = Object.values(activeJobs).find((j) => j.jobType === "runpod_generate")
+    const status = runpodJob?.status
+    if (status === "success" && prevRunpodJobStatus.current === "running") {
+      setTab(2)
+      fetchGenerated(0, genRowsPerPage)
+    }
+    if (status === "failed" && prevRunpodJobStatus.current === "running") {
+      showSnackbar(runpodJob?.step || "AI video generation failed", "error")
+    }
+    if (status) prevRunpodJobStatus.current = status
+  }, [activeJobs, fetchGenerated, genRowsPerPage, showSnackbar])
 
   const refreshAll = async () => {
     try { await http.post("/api/downloaded/cleanup") } catch (_) {}
@@ -555,7 +570,11 @@ export default function Videos() {
                                 <Chip label={v.status} size="small" color={STATUS_COLOR[v.status] || "default"}
                                   sx={{ height: 20, fontSize: "0.65rem" }} />
                                 <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                                  {v.source_type === "clip_extraction" ? "Clip" : "Stock"} · {v.aspect_ratio}
+                                  {v.source_type === "clip_extraction"
+                                    ? "Clip"
+                                    : v.source_type === "runpod_comfyui"
+                                      ? "RunPod"
+                                      : "Stock"} · {v.aspect_ratio}
                                   {v.duration_seconds ? ` · ${Math.floor(v.duration_seconds / 60)}:${String(v.duration_seconds % 60).padStart(2, "0")}` : ""}
                                 </Typography>
                                 {v.clip_virality_score != null && (

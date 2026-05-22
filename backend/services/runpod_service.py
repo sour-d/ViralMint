@@ -122,6 +122,30 @@ async def check_comfy_health(base_url: str) -> bool:
         return False
 
 
+async def reconcile_stale_setup_job(
+    setup_job: Optional[dict],
+    *,
+    nodes_ready: bool,
+    models_ready: bool,
+) -> Optional[dict]:
+    """Close orphaned running setup jobs when the pod is already ready."""
+    if not setup_job or not (nodes_ready and models_ready):
+        return setup_job
+    from backend.agents.job_helper import update_job_status
+
+    await update_job_status(
+        setup_job["job_id"],
+        "success",
+        progress_pct=100,
+        current_step="Setup complete.",
+    )
+    logger.info(
+        "DEBUG:: reconciled stale setup job %s (pod already ready)",
+        setup_job["job_id"][:8],
+    )
+    return None
+
+
 async def get_active_setup_job() -> Optional[dict]:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -214,6 +238,7 @@ def _empty_status() -> dict:
         "can_deploy": False,
         "can_generate": False,
         "can_setup": False,
+        "can_cleanup": False,
         "custom_nodes_ready": False,
         "custom_nodes_status": {"ready": False, "missing_class_types": [], "packs_needed": []},
         "models_ready": False,
@@ -256,11 +281,25 @@ async def get_pod_status(api_key: str, stored_pod_id: str = "") -> dict:
         nodes_status=nodes_status, models_status=models_status,
     )
     setup_job = await get_active_setup_job()
-    manager_queue = await mgr.queue_status(comfy_url) if comfy_ready and comfy_url else None
-    setup_in_progress = bool(
-        setup_job or pod_state == "starting"
-        or (comfy_ready and (not nodes_ready or not models_ready))
+    setup_job = await reconcile_stale_setup_job(
+        setup_job,
+        nodes_ready=nodes_ready,
+        models_ready=models_ready,
     )
+    need_queue_probe = comfy_ready and comfy_url and (
+        setup_job is not None or not (nodes_ready and models_ready)
+    )
+    manager_queue = (
+        await mgr.queue_status(comfy_url) if need_queue_probe else None
+    )
+    queue_busy = bool(
+        manager_queue
+        and (
+            manager_queue.get("is_processing")
+            or int(manager_queue.get("in_progress_count") or 0) > 0
+        )
+    )
+    setup_in_progress = bool(setup_job or pod_state == "starting" or queue_busy)
 
     return {
         "configured": True,
@@ -287,6 +326,7 @@ async def get_pod_status(api_key: str, stored_pod_id: str = "") -> dict:
         "can_generate": comfy_ready and nodes_ready and models_ready,
         "can_setup": comfy_ready and (not nodes_ready or not models_ready),
         "can_install_models": comfy_ready and (not nodes_ready or not models_ready),
+        "can_cleanup": comfy_ready and (nodes_ready or models_ready),
         "cost_per_hr": pod.get("costPerHr") if pod else None,
     }
 

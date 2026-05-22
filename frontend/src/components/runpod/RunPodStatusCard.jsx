@@ -8,12 +8,13 @@ import CloudQueueIcon from "@mui/icons-material/CloudQueue"
 import OpenInNewIcon from "@mui/icons-material/OpenInNew"
 import PlayArrowIcon from "@mui/icons-material/PlayArrow"
 import DownloadIcon from "@mui/icons-material/Download"
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline"
 import http from "../../api/http"
 import useAppStore from "../../store/appStore"
 
 const SETUP_JOB_TYPE = "runpod_install_models"
-const POLL_IDLE_MS = 8000
 const POLL_ACTIVE_MS = 2500
+const POLL_WAITING_MS = 12000
 
 const STATE_COLORS = {
   none: "default",
@@ -46,6 +47,17 @@ export default function RunPodStatusCard({ onReadyChange }) {
     [activeJobs],
   )
 
+  const needsFastPoll = Boolean(
+    busy || setupJob || status?.setup_in_progress || status?.pod_state === "starting",
+  )
+  const pollIntervalMs = useMemo(() => {
+    if (!status || status.pod_state === "error") return null
+    if (needsFastPoll) return POLL_ACTIVE_MS
+    if (status.can_generate) return null
+    if (status.configured) return POLL_WAITING_MS
+    return null
+  }, [status, needsFastPoll])
+
   const fetchStatus = useCallback(async () => {
     try {
       const { data } = await http.get("/api/runpod/status")
@@ -71,16 +83,21 @@ export default function RunPodStatusCard({ onReadyChange }) {
     fetchStatus()
   }, [fetchStatus])
 
-  const isActive = Boolean(
-    busy || setupJob || status?.setup_in_progress || status?.pod_state === "starting",
-  )
+  const isActive = Boolean(needsFastPoll)
 
   useEffect(() => {
-    if (!status) return undefined
-    const ms = isActive ? POLL_ACTIVE_MS : POLL_IDLE_MS
-    const id = setInterval(fetchStatus, ms)
+    if (pollIntervalMs == null) return undefined
+    const id = setInterval(fetchStatus, pollIntervalMs)
     return () => clearInterval(id)
-  }, [status, isActive, fetchStatus])
+  }, [pollIntervalMs, fetchStatus])
+
+  useEffect(() => {
+    const onFocus = () => {
+      if (pollIntervalMs == null) fetchStatus()
+    }
+    window.addEventListener("focus", onFocus)
+    return () => window.removeEventListener("focus", onFocus)
+  }, [pollIntervalMs, fetchStatus])
 
   const activityLine = useMemo(() => {
     if (busy === "deploy") return "Deploying RunPod GPU pod…"
@@ -93,7 +110,9 @@ export default function RunPodStatusCard({ onReadyChange }) {
   }, [busy, setupJob, status, loading])
 
   const progressPct = setupJob?.percent ?? status?.setup_job?.progress_pct ?? 0
-  const showProgress = Boolean(setupJob || status?.setup_job || busy === "setup")
+  const showProgress = Boolean(
+    busy === "setup" || setupJob || (status?.setup_job && !status?.can_generate),
+  )
 
   const handleDeploy = async () => {
     setBusy("deploy")
@@ -112,10 +131,38 @@ export default function RunPodStatusCard({ onReadyChange }) {
     setBusy("setup")
     try {
       const { data } = await http.post("/api/runpod/setup")
-      if (data.job_id) {
+      if (data.skipped) {
+        showSnackbar(data.message || "Pod already set up", "success")
+      } else if (data.job_id) {
         startJob(data.job_id, SETUP_JOB_TYPE, data.message || "Setting up pod…")
+        showSnackbar(data.message || "Setup started", "info")
+      } else {
+        showSnackbar(data.message || "Setup finished", "info")
       }
-      showSnackbar(data.message || "Setup started", "info")
+      await fetchStatus()
+    } catch (err) {
+      showSnackbar(err.response?.data?.detail || err.message, "error")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleCleanup = async () => {
+    const ok = window.confirm(
+      "Remove LTX workflow setup from this pod?\n\n"
+      + "• Uninstalls ComfyUI-LTXVideo and ComfyMath custom nodes\n"
+      + "• Lists ~45GB of model files for you to delete on the pod (not deleted automatically)\n\n"
+      + "Type OK to continue.",
+    )
+    if (!ok) return
+    setBusy("cleanup")
+    try {
+      const { data } = await http.post("/api/runpod/cleanup", { confirm: "REMOVE_LTX" })
+      const modelPaths = data?.models?.paths || []
+      const pathsHint = modelPaths.length
+        ? `\n\nModel paths (delete on pod):\n${modelPaths.slice(0, 3).join("\n")}${modelPaths.length > 3 ? "\n…" : ""}`
+        : ""
+      showSnackbar((data.message || "Cleanup queued") + pathsHint, "warning")
       await fetchStatus()
     } catch (err) {
       showSnackbar(err.response?.data?.detail || err.message, "error")
@@ -231,6 +278,18 @@ export default function RunPodStatusCard({ onReadyChange }) {
               {busy === "setup" ? "Starting…" : "Setup pod"}
             </Button>
           )}
+          {status?.can_cleanup && (
+            <Button
+              size="small"
+              variant="outlined"
+              color="warning"
+              startIcon={busy === "cleanup" ? <CircularProgress size={16} /> : <DeleteOutlineIcon />}
+              onClick={handleCleanup}
+              disabled={!!busy}
+            >
+              {busy === "cleanup" ? "Removing…" : "Remove LTX setup"}
+            </Button>
+          )}
           {status?.can_deploy && !status?.comfy_ready && (
             <Button
               size="small"
@@ -255,7 +314,13 @@ export default function RunPodStatusCard({ onReadyChange }) {
 
       {status?.comfy_ready && status?.can_setup && !setupJob && (
         <Alert severity="info" sx={{ mt: 2 }}>
-          Run <strong>Setup pod</strong> once per pod. Restart ComfyUI after custom nodes finish installing.
+          <strong>Setup pod</strong> only downloads or installs what is missing (safe to click again).
+          Uses RunpodDirect like ComfyUI &quot;Download to Pod&quot;. Restart ComfyUI after new node installs.
+        </Alert>
+      )}
+      {status?.comfy_ready && status?.can_generate && !setupJob && (
+        <Alert severity="success" sx={{ mt: 2 }}>
+          Pod is ready. Setup will not re-download models or reinstall nodes unless something is missing.
         </Alert>
       )}
     </Paper>

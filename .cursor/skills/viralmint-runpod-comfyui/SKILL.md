@@ -83,7 +83,7 @@ Uploads use ComfyUI `POST /upload/image` for both image and audio. Job uses `POS
 ## Implementation rules
 
 - **Minimize scope** — one manifest as source of truth; no duplicate wget scripts
-- **No `/download_model` fallback** unless Manager is proven unavailable on target image
+- **Model downloads**: ComfyUI-RunpodDirect `POST /server_download/start` (same as UI Download to Pod), then `/download_model`, then Manager fallback
 - **Do not** use `yarn test` for whole suite; run single test file if tests are added
 - **Rebuild** `frontend/dist` when changing `frontend/src` if app serves static dist
 - **`can_generate`** = `comfy_ready` + `custom_nodes_ready` + `models_ready`

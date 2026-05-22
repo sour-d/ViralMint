@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2025-2026 ViralMint Contributors
-"""ComfyUI pod readiness checks and setup (custom nodes + models via Manager)."""
+"""ComfyUI pod readiness checks and setup (nodes via Manager, models via ComfyUI core)."""
 from __future__ import annotations
 
 import json
@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 MODELS_MANIFEST = Path(__file__).resolve().parent.parent / "runpod" / "models_manifest.json"
 NODES_MANIFEST = Path(__file__).resolve().parent.parent / "runpod" / "custom_nodes_manifest.json"
 WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
+WORKFLOW_UI_JSON = WORKFLOWS_DIR / "video_ltx2_3_ia2v.json"
 
 CORE_CLASS_TYPES = frozenset({
     "ResizeImageMaskNode", "ResizeImagesByLongerEdge", "TrimAudioDuration",
@@ -41,6 +42,57 @@ def _hf_url(url: str) -> str:
     return f"{url}{sep}token={token}"
 
 
+def _manifest_model_entries() -> list[dict[str, Any]]:
+    return list(_load_json(MODELS_MANIFEST).get("models", []))
+
+
+def _workflow_model_urls() -> dict[str, dict[str, str]]:
+    """URLs embedded in the UI workflow (same source as 'Download to Pod' dialog)."""
+    if not WORKFLOW_UI_JSON.is_file():
+        return {}
+    try:
+        data = json.loads(WORKFLOW_UI_JSON.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    found: dict[str, dict[str, str]] = {}
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            models = obj.get("models")
+            if isinstance(models, list):
+                for item in models:
+                    if not isinstance(item, dict):
+                        continue
+                    name = item.get("name") or item.get("filename")
+                    url = item.get("url")
+                    directory = item.get("directory") or item.get("folder")
+                    if name and url:
+                        found[str(name)] = {
+                            "hf_url": str(url),
+                            "folder": str(directory or "checkpoints"),
+                        }
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                walk(value)
+
+    walk(data)
+    return found
+
+
+def _resolve_model_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Prefer workflow-embedded URLs, then manifest hf_url."""
+    merged = dict(entry)
+    by_name = _workflow_model_urls()
+    wf = by_name.get(entry["filename"])
+    if wf:
+        merged["hf_url"] = wf.get("hf_url") or merged.get("hf_url")
+        merged["folder"] = wf.get("folder") or merged.get("folder")
+    return merged
+
+
 def workflow_class_types(workflow_file: str = "video_ltx2_3_ia2v-api.json") -> set[str]:
     with open(WORKFLOWS_DIR / workflow_file, encoding="utf-8") as f:
         workflow = json.load(f)
@@ -49,6 +101,37 @@ def workflow_class_types(workflow_file: str = "video_ltx2_3_ia2v-api.json") -> s
         for node in workflow.values()
         if isinstance(node, dict) and "class_type" in node
     }
+
+
+async def filter_missing_model_entries(
+    base_url: str,
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Only entries not already on the pod (Comfy /models + RunpodDirect disk check)."""
+    models_data = await mgr.comfy_get(base_url, "/models")
+    model_lists: dict[str, list[str]] = {}
+    if isinstance(models_data, dict):
+        for key, val in models_data.items():
+            if isinstance(val, list):
+                model_lists[key] = [str(v) for v in val]
+
+    check = _check_models(model_lists)
+    if check["ready"]:
+        return []
+
+    manifest_by_name = {m["filename"]: m for m in entries}
+    comfy_missing = {m["filename"] for m in check["missing"]}
+    candidates = [
+        _resolve_model_entry(manifest_by_name[name])
+        for name in comfy_missing
+        if name in manifest_by_name
+    ]
+
+    on_disk_missing = await mgr.runpod_missing_model_filenames(base_url, candidates)
+    if on_disk_missing is None:
+        return candidates
+
+    return [e for e in candidates if e["filename"] in on_disk_missing]
 
 
 async def assess_pod(base_url: str) -> dict[str, Any]:
@@ -68,6 +151,18 @@ async def assess_pod(base_url: str) -> dict[str, Any]:
 
     nodes = _check_nodes(registered)
     models = _check_models(model_lists)
+    if not models["ready"]:
+        still_missing = await filter_missing_model_entries(
+            base_url,
+            [_resolve_model_entry(m) for m in _manifest_model_entries()],
+        )
+        if not still_missing:
+            models = {
+                **models,
+                "ready": True,
+                "missing": [],
+                "present": models.get("present", []) + models.get("missing", []),
+            }
     return {
         "custom_nodes_ready": nodes["ready"],
         "custom_nodes_status": nodes,
@@ -156,99 +251,14 @@ def _pack_install_payload(pack: dict) -> dict[str, Any]:
     }
 
 
-def _bootstrap_pack() -> Optional[dict]:
-    manifest = _load_json(NODES_MANIFEST)
-    for pack in manifest.get("packs", []):
-        if pack.get("id") == "viralmint-runpod-bootstrap":
-            return pack
-    return None
-
-
-async def _setup_bootstrap(
-    base_url: str,
-    on_progress: Optional[Callable[[float, str], Awaitable[None]]] = None,
-) -> dict[str, Any]:
-    """Clone ViralMint on the pod and run install.py (wget downloads + Manager registry)."""
-    pack = _bootstrap_pack()
-    if not pack:
-        return {"ok": False, "failed": [], "message": "Bootstrap pack missing from manifest."}
-
-    models_data = await mgr.comfy_get(base_url, "/models")
-    model_lists: dict[str, list[str]] = {}
-    if isinstance(models_data, dict):
-        for key, val in models_data.items():
-            if isinstance(val, list):
-                model_lists[key] = [str(v) for v in val]
-    if _check_models(model_lists)["ready"]:
-        return {"ok": True, "skipped": True, "message": "All models already on disk."}
-
-    if on_progress:
-        await on_progress(5, "Starting on-pod model downloads (wget)…")
-
-    installed = await _installed_pack_ids(base_url)
-    payload = _pack_install_payload(pack)
-    # Do not use /manager/queue/reinstall — it re-reads the request body and often fails.
-    if pack["id"] in installed:
-        path = "/manager/queue/fix"
-    else:
-        path = "/manager/queue/install"
-    ok, code, detail = await mgr.post_json(base_url, path, payload)
-    if not ok:
-        hint = (
-            "Push latest ViralMint (with root install.py) to GitHub so the pod can clone it."
-            if code in (0, 404)
-            else "Check ComfyUI-Manager security level (needs at least middle)."
-        )
-        err = f"Could not start bootstrap ({path}, HTTP {code}): {detail}. {hint}"
-        logger.error("DEBUG:: bootstrap failed: %s", err)
-        return {"ok": False, "failed": [{"id": pack["id"], "error": err}], "message": err}
-
-    await mgr.queue_start(base_url)
-
-    async def on_tick(queue: dict[str, Any]) -> None:
-        if not on_progress:
-            return
-        line = mgr.queue_activity_line(queue) or "Downloading on pod…"
-        done = int(queue.get("done_count") or 0)
-        total = int(queue.get("total_count") or 0)
-        pct = 10 + int(35 * done / max(total, 1)) if total else 15
-        await on_progress(pct, line)
-
-    finished = await mgr.wait_for_manager_queue(base_url, timeout=7200.0, on_tick=on_tick)
-    models_data = await mgr.comfy_get(base_url, "/models")
-    model_lists = {}
-    if isinstance(models_data, dict):
-        for key, val in models_data.items():
-            if isinstance(val, list):
-                model_lists[key] = [str(v) for v in val]
-    check = _check_models(model_lists)
-
-    if check["ready"]:
-        return {"ok": True, "message": "Models downloaded on pod."}
-    if not finished:
-        return {
-            "ok": False,
-            "failed": check["missing"],
-            "message": "Bootstrap timed out — check pod terminal logs for [ViralMint bootstrap].",
-        }
-    missing = ", ".join(m["filename"] for m in check["missing"][:3])
-    return {
-        "ok": False,
-        "failed": check["missing"],
-        "message": f"Some models still missing after bootstrap: {missing}",
-    }
-
-
 async def _queue_node_pack(base_url: str, pack: dict) -> tuple[bool, str]:
-    if pack.get("id") == "viralmint-runpod-bootstrap":
-        return True, ""
     payload = _pack_install_payload(pack)
     ok, code, detail = await mgr.post_json(base_url, "/manager/queue/install", payload)
     if ok:
         logger.info("DEBUG:: custom node queued: %s", pack["id"])
         return True, ""
-    if code == 403:
-        return False, "ComfyUI-Manager security level blocked install"
+    if code == 403 or mgr.is_security_block(code, detail):
+        return False, mgr.SECURITY_LEVEL_INSTRUCTIONS
     return False, f"Could not queue custom node install (HTTP {code}): {detail}"
 
 
@@ -265,68 +275,154 @@ def _manager_model_payload(entry: dict, url: str) -> dict[str, str]:
     }
 
 
-async def _queue_model(base_url: str, entry: dict) -> tuple[bool, str]:
-    url = _hf_url(entry.get("hf_url") or "")
+async def _download_model(base_url: str, entry: dict) -> tuple[bool, str]:
+    """Download via ComfyUI core (same as UI 'Download to Pod'); Manager as fallback."""
+    resolved = _resolve_model_entry(entry)
+    url = _hf_url(resolved.get("hf_url") or "")
     if not url:
-        return False, "no hf_url in manifest"
+        return False, "no download URL in manifest or workflow"
 
     hf_token = (app_settings.RUNPOD_HF_TOKEN or os.getenv("HF_TOKEN") or "").strip()
-
-    # LTX 2.3 is not in Manager model-list.json yet; use ComfyUI /download_model first.
-    ok, err = await mgr.download_model_comfy(base_url, entry, url, hf_token=hf_token)
+    ok, err = await mgr.download_model_on_pod(base_url, resolved, url, hf_token=hf_token)
     if ok:
         return True, ""
-    if err != "comfy_download_unavailable":
+    if err not in ("comfy_download_unavailable", "runpod_direct_unavailable"):
         return False, err
 
-    payload = _manager_model_payload(entry, url)
-    ok, code, detail = await mgr.post_json(base_url, "/manager/queue/install_model", payload)
+    payload = _manager_model_payload(resolved, url)
+    ok, code, detail = await mgr.post_json(
+        base_url, "/manager/queue/install_model", payload,
+    )
     if ok:
-        logger.info("DEBUG:: model queued via Manager: %s", entry["filename"])
-        return True, ""
-    if code == 400:
-        return False, (
-            f"Model not in Manager catalog and /download_model unavailable: {detail}"
-        )
-    if code == 403:
-        return False, "ComfyUI-Manager blocked model URL (security level)"
-    return False, f"Could not queue model install (HTTP {code}): {detail}"
+        logger.info("DEBUG:: model queued via Manager fallback: %s", entry["filename"])
+        return True, "manager_queued"
+    if code == 403 or mgr.is_security_block(code, detail):
+        return False, mgr.SECURITY_LEVEL_INSTRUCTIONS
+    return False, (
+        f"ComfyUI download unavailable and Manager install failed ({code}): {detail}"
+    )
 
 
 async def setup_pod(
     base_url: str,
     on_progress: Optional[Callable[[float, str], Awaitable[None]]] = None,
 ) -> dict[str, Any]:
-    """Bootstrap model downloads on pod, install custom nodes, then verify models."""
-    if not await mgr.manager_available(base_url):
+    """Install models via ComfyUI core; custom nodes via ComfyUI-Manager queue."""
+    if on_progress:
+        await on_progress(2, "Checking pod…")
+
+    assessment = await assess_pod(base_url)
+    if assessment["custom_nodes_ready"] and assessment["models_ready"]:
         return {
-            "ok": False,
-            "message": "ComfyUI-Manager is not available on this pod.",
-            "custom_nodes": {"skipped": "manager_unavailable"},
-            "models": {"skipped": "manager_unavailable"},
+            "ok": True,
+            "skipped": True,
+            "message": "Pod already set up — all models and custom nodes are present.",
+            "custom_nodes": {"skipped": True, "message": "Custom nodes already present."},
+            "models": {"skipped": True, "message": "All models already present."},
         }
 
-    bootstrap_out = await _setup_bootstrap(base_url, on_progress)
-    nodes_out = await _setup_nodes(base_url, on_progress)
     models_out = await _setup_models(base_url, on_progress)
 
-    ok = (
-        bootstrap_out.get("ok", True)
-        and not nodes_out.get("failed")
-        and not models_out.get("failed")
+    nodes_out: dict[str, Any]
+    if not await mgr.manager_available(base_url):
+        nodes_out = {
+            "queued": [],
+            "failed": [],
+            "message": "ComfyUI-Manager not available — install custom nodes manually.",
+        }
+    else:
+        nodes_out = await _setup_nodes(base_url, on_progress, start_queue=False)
+        if nodes_out.get("queued"):
+            if on_progress:
+                await on_progress(92, "Starting custom node install queue…")
+            await mgr.queue_start(base_url)
+
+    skipped = bool(
+        models_out.get("skipped")
+        and (nodes_out.get("skipped") or not nodes_out.get("queued"))
     )
-    parts = [
-        m for m in (
-            bootstrap_out.get("message"),
-            nodes_out.get("message"),
-            models_out.get("message"),
-        )
-        if m
-    ]
+    ok = not nodes_out.get("failed") and not models_out.get("failed")
+    parts = [m for m in (models_out.get("message"), nodes_out.get("message")) if m]
+    if nodes_out.get("queued"):
+        parts.append("Restart ComfyUI after custom node installs finish.")
+    if models_out.get("downloaded"):
+        parts.append("Large model downloads may take 30–90+ minutes.")
     return {
         "ok": ok,
+        "skipped": skipped,
         "message": " ".join(parts) or "Setup complete.",
-        "bootstrap": bootstrap_out,
+        "custom_nodes": nodes_out,
+        "models": models_out,
+    }
+
+
+async def cleanup_pod(
+    base_url: str,
+    *,
+    remove_models: bool = True,
+    remove_nodes: bool = True,
+) -> dict[str, Any]:
+    """
+    Remove LTX workflow custom nodes (Manager uninstall) and list model paths to delete.
+    Model files are not deleted remotely (no ComfyUI API); paths are returned for manual removal.
+    """
+    nodes_out: dict[str, Any] = {"uninstalled": [], "skipped": True, "message": "Skipped."}
+    models_out: dict[str, Any] = {"paths": [], "skipped": True, "message": "Skipped."}
+
+    if remove_nodes and await mgr.manager_available(base_url):
+        installed = await _installed_pack_ids(base_url)
+        manifest = _load_json(NODES_MANIFEST)
+        uninstalled, failed = [], []
+        for pack in manifest.get("packs", []):
+            if pack["id"] not in installed:
+                continue
+            payload = _pack_install_payload(pack)
+            ok, code, detail = await mgr.post_json(
+                base_url, "/manager/queue/uninstall", payload,
+            )
+            if ok:
+                uninstalled.append(pack["id"])
+            else:
+                failed.append({"id": pack["id"], "error": detail or f"HTTP {code}"})
+        if uninstalled:
+            await mgr.queue_start(base_url)
+        nodes_out = {
+            "uninstalled": uninstalled,
+            "failed": failed,
+            "message": (
+                f"Queued uninstall for {len(uninstalled)} custom node pack(s)."
+                if uninstalled
+                else "No workflow custom nodes to uninstall."
+            ),
+        }
+    elif remove_nodes:
+        nodes_out = {
+            "uninstalled": [],
+            "failed": [],
+            "message": "ComfyUI-Manager not available — uninstall nodes manually.",
+        }
+
+    if remove_models:
+        paths = []
+        for entry in _manifest_model_entries():
+            folder = entry.get("folder") or "checkpoints"
+            paths.append(
+                f"/workspace/runpod-slim/ComfyUI/models/{folder}/{entry['filename']}"
+            )
+        models_out = {
+            "paths": paths,
+            "skipped": False,
+            "message": (
+                "Delete these model files on the pod (RunPod file browser or terminal). "
+                "ViralMint cannot remove large files via API."
+            ),
+        }
+
+    return {
+        "ok": not nodes_out.get("failed", []),
+        "message": " ".join(
+            m for m in (nodes_out.get("message"), models_out.get("message")) if m
+        ),
         "custom_nodes": nodes_out,
         "models": models_out,
     }
@@ -335,13 +431,20 @@ async def setup_pod(
 async def _setup_nodes(
     base_url: str,
     on_progress: Optional[Callable[[float, str], Awaitable[None]]] = None,
+    *,
+    start_queue: bool = True,
 ) -> dict[str, Any]:
     info = await mgr.comfy_get(base_url, "/object_info")
     registered = set(info.keys()) if isinstance(info, dict) else set()
     check = _check_nodes(registered)
 
     if check["ready"]:
-        return {"queued": [], "failed": [], "message": "Custom nodes already present."}
+        return {
+            "queued": [],
+            "failed": [],
+            "skipped": True,
+            "message": "Custom nodes already present.",
+        }
     if check["missing_core_class_types"]:
         return {
             "queued": [],
@@ -356,15 +459,13 @@ async def _setup_nodes(
     queued, failed = [], []
     packs = check["packs_needed"]
 
-    packs = [p for p in packs if p.get("id") != "viralmint-runpod-bootstrap"]
-
     for i, pack in enumerate(packs):
         if pack["id"] in installed:
             continue
         if on_progress:
             await on_progress(
-                45 + int(35 * i / max(len(packs), 1)),
-                f"Installing {pack.get('title', pack['id'])}…",
+                10 + int(35 * i / max(len(packs), 1)),
+                f"Queueing {pack.get('title', pack['id'])}…",
             )
         ok, err = await _queue_node_pack(base_url, pack)
         if ok:
@@ -372,11 +473,11 @@ async def _setup_nodes(
         else:
             failed.append({"id": pack["id"], "error": err})
 
-    if queued:
+    if queued and start_queue:
         await mgr.queue_start(base_url)
 
     if queued:
-        msg = "Custom nodes queued — restart ComfyUI on the pod when the queue finishes."
+        msg = f"Queued {len(queued)} custom node pack(s)."
     elif failed:
         msg = "Could not queue some custom node installs."
     else:
@@ -389,38 +490,54 @@ async def _setup_models(
     base_url: str,
     on_progress: Optional[Callable[[float, str], Awaitable[None]]] = None,
 ) -> dict[str, Any]:
-    models_data = await mgr.comfy_get(base_url, "/models")
-    model_lists = {}
-    if isinstance(models_data, dict):
-        for key, val in models_data.items():
-            if isinstance(val, list):
-                model_lists[key] = [str(v) for v in val]
+    all_entries = [_resolve_model_entry(m) for m in _manifest_model_entries()]
+    to_download = await filter_missing_model_entries(base_url, all_entries)
+    if not to_download:
+        return {
+            "downloaded": [],
+            "queued": [],
+            "failed": [],
+            "skipped": True,
+            "message": "All models already present.",
+        }
 
-    check = _check_models(model_lists)
-    if check["ready"]:
-        return {"queued": [], "failed": [], "message": "All models already present."}
-
-    queued, failed = [], []
-    for i, entry in enumerate(check["missing"]):
-        name = entry["filename"]
+    downloaded, queued, failed = [], [], []
+    for i, full_entry in enumerate(to_download):
+        name = full_entry["filename"]
         if on_progress:
             await on_progress(
-                80 + int(18 * i / max(len(check["missing"]), 1)),
+                5 + int(80 * i / max(len(to_download), 1)),
                 f"Downloading {name}…",
             )
-        ok, err = await _queue_model(base_url, entry)
+        ok, err = await _download_model(base_url, full_entry)
         if ok:
-            queued.append(name)
+            if err == "manager_queued":
+                queued.append(name)
+            else:
+                downloaded.append(name)
         else:
-            failed.append({**entry, "error": err})
+            failed.append({**full_entry, "error": err})
 
     if queued:
-        # Comfy /download_model runs inline; Manager path needs queue_start.
         await mgr.queue_start(base_url)
-        msg = "Model downloads started (30–90+ min for large files)."
-    elif failed:
-        msg = "Could not queue some model downloads."
-    else:
-        msg = "No models queued."
 
-    return {"queued": queued, "failed": failed, "message": msg}
+    if downloaded:
+        msg = f"Downloaded {len(downloaded)} model(s) on the pod."
+    elif queued:
+        msg = f"Queued {len(queued)} model(s) via ComfyUI-Manager fallback."
+    elif failed:
+        first_err = failed[0].get("error", "") if failed else ""
+        names = ", ".join(f["filename"] for f in failed[:3])
+        msg = f"Could not download: {names}."
+        if first_err:
+            msg += f" {first_err}"
+    else:
+        msg = "No models to download."
+
+    return {
+        "downloaded": downloaded,
+        "queued": queued,
+        "failed": failed,
+        "skipped": not downloaded and not queued and not failed,
+        "message": msg,
+    }

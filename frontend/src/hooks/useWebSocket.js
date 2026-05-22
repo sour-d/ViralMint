@@ -35,12 +35,13 @@ export default function useWebSocket() {
         const allJobs = [...(runningRes.data.jobs || []), ...(pendingRes.data.jobs || [])]
         // Restore active jobs from API on reconnect
         allJobs.forEach(j => {
+          if (j.job_type === "runpod_install_models") {
+            return
+          }
           if (!useAppStore.getState().activeJobs[j.id]) {
             const msg = j.current_step || j.title || j.job_type
-            // Parse input_json to preserve job metadata (e.g. type: "clip_extraction")
             let inputData = null
             try { inputData = j.input_json ? JSON.parse(j.input_json) : null } catch {}
-            // Restore job into global store
             startJob(j.id, j.job_type, msg, { inputData })
             if (j.progress_pct > 0) {
               updateJobProgress(j.id, j.progress_pct, j.current_step || "")
@@ -117,12 +118,29 @@ export default function useWebSocket() {
 
       ws.on("job_complete", (msg) => {
         completeJob(msg.job_id)
-        // Auto-remove from sidebar after 10s
-        setTimeout(() => removeJob(msg.job_id), 10000)
         const result = msg.result || {}
-        // Determine job type from active jobs store
         const jobInfo = useAppStore.getState().activeJobs[msg.job_id]
         const jobType = jobInfo?.type || msg.job_type || ""
+
+        if (jobType === "runpod_install_models") {
+          removeJob(msg.job_id)
+          showSnackbar(result.message || "Pod setup complete.", "success")
+          return
+        }
+
+        if (jobType === "runpod_generate") {
+          setTimeout(() => removeJob(msg.job_id), 10000)
+          showSnackbar(
+            result.title
+              ? `Video ready: ${result.title}`
+              : "AI video generation complete — see Generated tab in Library.",
+            "success",
+          )
+          return
+        }
+
+        // Auto-remove from sidebar after 10s
+        setTimeout(() => removeJob(msg.job_id), 10000)
 
         if (result.total_results !== undefined) {
           const total = result.total_results

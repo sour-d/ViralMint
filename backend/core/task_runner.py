@@ -1090,17 +1090,39 @@ async def run_install_runpod_models(
             await ws_manager.send_progress(job_id, pct, step, user_id)
 
         result = await setup_pod(base_url, on_progress=on_progress)
-        await update_job_status(
-            job_id, "success",
-            progress_pct=100,
-            current_step=result.get("message", "Done"),
-            output_data=result,
-        )
-        await ws_manager.send({
-            "type": "job_complete",
-            "job_id": job_id,
-            "result": result,
-        }, user_id)
+        if result.get("skipped"):
+            await update_job_status(
+                job_id, "success",
+                progress_pct=100,
+                current_step=result.get("message", "Already set up"),
+                output_data=result,
+            )
+            await ws_manager.send({
+                "type": "job_complete",
+                "job_id": job_id,
+                "result": result,
+            }, user_id)
+            return
+        if result.get("ok"):
+            await update_job_status(
+                job_id, "success",
+                progress_pct=100,
+                current_step=result.get("message", "Done"),
+                output_data=result,
+            )
+            await ws_manager.send({
+                "type": "job_complete",
+                "job_id": job_id,
+                "result": result,
+            }, user_id)
+        else:
+            err = result.get("message") or "Pod setup failed"
+            await update_job_status(job_id, "failed", error_message=err, output_data=result)
+            await ws_manager.send({
+                "type": "job_failed",
+                "job_id": job_id,
+                "error": err,
+            }, user_id)
     except Exception as e:
         from backend.agents.job_helper import update_job_status as _update
         await _update(job_id, "failed", error_message=str(e))

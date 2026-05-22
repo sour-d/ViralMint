@@ -1,28 +1,48 @@
 {
-  "description": "Models required by video_ltx2_3_ia2v-api.json — installed via ComfyUI-Manager API.",
+  "description": "Models for video_ltx2_3_ia2v-api.json. Downloaded on-pod via ComfyUI POST /download_model during Setup pod (URLs also in video_ltx2_3_ia2v.json).",
   "models": [
     {
       "folder": "checkpoints",
+      "type": "checkpoint",
+      "base": "LTX-2.3",
+      "save_path": "default",
+      "name": "LTX-2.3 22B Dev FP8",
       "filename": "ltx-2.3-22b-dev-fp8.safetensors",
-      "hf_url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-dev-fp8.safetensors"
+      "hf_url": "https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-dev-fp8.safetensors"
     },
     {
       "folder": "loras",
+      "type": "lora",
+      "base": "LTX-2.3",
+      "save_path": "default",
+      "name": "LTX-2.3 22B Distilled LoRA 384",
       "filename": "ltx-2.3-22b-distilled-lora-384.safetensors",
       "hf_url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-lora-384.safetensors"
     },
     {
       "folder": "loras",
+      "type": "lora",
+      "base": "LTX-2.3",
+      "save_path": "default",
+      "name": "Gemma 3 12B IT Abliterated LoRA",
       "filename": "gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors",
       "hf_url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors"
     },
     {
       "folder": "latent_upscale_models",
+      "type": "latent_upscale",
+      "base": "LTX-2.3",
+      "save_path": "default",
+      "name": "LTX-2.3 Spatial Upscaler x2",
       "filename": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
       "hf_url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
     },
     {
       "folder": "text_encoders",
+      "type": "text_encoders",
+      "base": "LTX-2.3",
+      "save_path": "default",
+      "name": "Gemma 3 12B IT FP4 Mixed",
       "filename": "gemma_3_12B_it_fp4_mixed.safetensors",
       "hf_url": "https://huggingface.co/Comfy-Org/ltxv-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors"
     }
