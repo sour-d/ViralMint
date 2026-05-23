@@ -80,7 +80,7 @@ async def create_pod(api_key: str) -> dict:
         "ports": pod_config.PORTS,
         "cloudType": pod_config.CLOUD_TYPE,
         "supportPublicIp": pod_config.SUPPORT_PUBLIC_IP,
-        "interruptible": False,
+        "interruptible": True,
     }
     if getattr(pod_config, "TEMPLATE_ID", None):
         body["templateId"] = pod_config.TEMPLATE_ID
