@@ -50,6 +50,12 @@ class RunpodGenerateRequest(BaseModel):
     length_seconds: int = 5
 
 
+class PromptFromMediaRequest(BaseModel):
+    start_image: str
+    reference_audio: str
+    length_seconds: int = 5
+
+
 class SplitScenesRequest(BaseModel):
     script: str
     aspect_ratio: str = "9:16"
@@ -166,6 +172,65 @@ async def generate_runpod(body: RunpodGenerateRequest):
         user_id="local",
     ))
     return {"job_id": job.id}
+
+
+@router.post("/prompt-from-media")
+async def prompt_from_media(body: PromptFromMediaRequest):
+    """
+    Auto-write an LTX-2.3 prompt from an uploaded start image + reference
+    audio. The audio is analysed locally with librosa (BPM, beats, energy,
+    key, brightness). The image + features then go to a vision-capable LLM
+    (user's BYOK model if vision-capable, else a free OpenRouter vision
+    model) which classifies the track and writes a timestamped prompt.
+    """
+    if not body.start_image:
+        raise HTTPException(400, "Start image is required")
+    if not body.reference_audio:
+        raise HTTPException(400, "Reference audio is required")
+    if body.length_seconds < 1 or body.length_seconds > 60:
+        raise HTTPException(400, "Length must be between 1 and 60 seconds")
+
+    from backend.models.user_settings import UserSettings
+    from backend.services import runpod_service
+    from backend.services import prompt_synth_service
+
+    try:
+        image_path = runpod_service.resolve_media_path(body.start_image)
+        audio_path = runpod_service.resolve_media_path(body.reference_audio)
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail=str(e)) from e
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(UserSettings).where(UserSettings.user_id == "local"))
+        user_settings = result.scalar_one_or_none()
+
+    try:
+        features = await prompt_synth_service.analyze_audio(audio_path, body.length_seconds)
+    except Exception as e:
+        logger.exception("DEBUG:: audio analysis failed")
+        raise HTTPException(500, f"Audio analysis failed: {e}") from e
+
+    try:
+        synth = await prompt_synth_service.synthesize_prompt(
+            image_path=image_path,
+            audio=features,
+            length_seconds=body.length_seconds,
+            user_settings=user_settings,
+        )
+    except Exception as e:
+        logger.exception("DEBUG:: prompt synthesis failed")
+        raise HTTPException(502, f"Prompt synthesis failed: {e}") from e
+
+    return {
+        "prompt": synth["prompt"],
+        "audio_kind": synth["audio_kind"],
+        "subject_role": synth.get("subject_role"),
+        "genre": synth["genre"],
+        "mood": synth["mood"],
+        "energy_label": synth["energy_label"],
+        "model_used": synth.get("model_used"),
+        "audio": features.to_dict(),
+    }
 
 
 @router.post("/split-scenes")

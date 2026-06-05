@@ -7,6 +7,7 @@ import asyncio
 import copy
 import json
 import logging
+from pickle import FALSE
 import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -80,7 +81,7 @@ async def create_pod(api_key: str) -> dict:
         "ports": pod_config.PORTS,
         "cloudType": pod_config.CLOUD_TYPE,
         "supportPublicIp": pod_config.SUPPORT_PUBLIC_IP,
-        "interruptible": True,
+        "interruptible": False,
     }
     if getattr(pod_config, "TEMPLATE_ID", None):
         body["templateId"] = pod_config.TEMPLATE_ID

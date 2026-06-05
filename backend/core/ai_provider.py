@@ -48,6 +48,52 @@ _OPENROUTER_HEADERS = {
 }
 
 
+def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
+    """
+    Convert OpenAI-style chat messages to Anthropic format.
+
+    Plain `content: str` passes through. OpenAI multimodal content arrays
+    (`[{type:"text",text:...}, {type:"image_url", image_url:{url:"data:..."}}]`)
+    get rewritten into Anthropic's `{type:"image", source:{type:"base64",
+    media_type, data}}` blocks. URLs that aren't data URIs are sent through
+    as Anthropic `{type:"image", source:{type:"url", url}}` (supported in
+    recent SDK versions).
+    """
+    out: list[dict] = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, str) or content is None:
+            out.append(msg)
+            continue
+        if not isinstance(content, list):
+            out.append(msg)
+            continue
+        new_blocks: list[dict] = []
+        for block in content:
+            btype = block.get("type")
+            if btype == "text":
+                new_blocks.append({"type": "text", "text": block.get("text", "")})
+            elif btype == "image_url":
+                url = (block.get("image_url") or {}).get("url", "")
+                if url.startswith("data:") and ";base64," in url:
+                    header, b64 = url.split(",", 1)
+                    media_type = header.split(":", 1)[1].split(";", 1)[0]
+                    new_blocks.append({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": b64},
+                    })
+                elif url:
+                    new_blocks.append({
+                        "type": "image",
+                        "source": {"type": "url", "url": url},
+                    })
+            else:
+                # Unknown block type — drop instead of breaking the API call.
+                logger.debug("DEBUG:: dropping unknown content block type %r for Anthropic", btype)
+        out.append({"role": msg.get("role", "user"), "content": new_blocks})
+    return out
+
+
 class AIClient:
     """Universal AI client — same interface regardless of underlying provider."""
 
@@ -94,7 +140,7 @@ class AIClient:
             model=self.model,
             max_tokens=max_tokens,
             system=system or "",
-            messages=messages,
+            messages=_to_anthropic_messages(messages),
         ) as stream:
             async for text in stream.text_stream:
                 yield text

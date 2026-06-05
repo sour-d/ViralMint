@@ -188,145 +188,153 @@ export default function RunPodStatusCard({ onReadyChange }) {
 
   return (
     <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2, mb: 2 }}>
-      <Stack direction="row" spacing={1.5} alignItems="flex-start" justifyContent="space-between">
-        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ flex: 1, minWidth: 0 }}>
-          <CloudQueueIcon sx={{ color: "primary.main", fontSize: 28 }} />
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                RunPod ComfyUI
-              </Typography>
-              {loading ? (
-                <CircularProgress size={16} />
-              ) : (
-                <Chip
-                  size="small"
-                  label={STATE_LABELS[podState] || podState}
-                  color={STATE_COLORS[podState] || "default"}
-                  variant="outlined"
+      <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ minWidth: 0 }}>
+        <CloudQueueIcon sx={{ color: "primary.main", fontSize: 28, flexShrink: 0, mt: 0.25 }} />
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+              RunPod ComfyUI
+            </Typography>
+            {loading ? (
+              <CircularProgress size={16} />
+            ) : (
+              <Chip
+                size="small"
+                label={STATE_LABELS[podState] || podState}
+                color={STATE_COLORS[podState] || "default"}
+                variant="outlined"
+              />
+            )}
+            {status?.comfy_ready && (
+              <Chip size="small" label="ComfyUI up" color="info" variant="outlined" />
+            )}
+            {status?.custom_nodes_ready && (
+              <Chip size="small" label="Nodes ready" color="success" variant="outlined" />
+            )}
+            {status?.models_ready && (
+              <Chip size="small" label="Models ready" color="success" />
+            )}
+            {status?.can_generate && (
+              <Chip size="small" label="Ready to generate" color="success" variant="outlined" />
+            )}
+          </Stack>
+
+          {activityLine && (
+            <Box
+              sx={{
+                mt: 1.5,
+                px: 1.25,
+                py: 0.75,
+                borderRadius: 1,
+                bgcolor: (t) => (t.palette.mode === "dark"
+                  ? "rgba(255,255,255,0.06)"
+                  : "rgba(0,0,0,0.04)"),
+                border: 1,
+                borderColor: "divider",
+              }}
+            >
+              <Stack direction="row" spacing={1} alignItems="flex-start">
+                {isActive && (
+                  <CircularProgress size={12} thickness={5} sx={{ flexShrink: 0, mt: 0.4 }} />
+                )}
+                <Typography
+                  variant="caption"
+                  component="div"
+                  sx={{
+                    fontFamily: "monospace",
+                    fontSize: "0.75rem",
+                    lineHeight: 1.5,
+                    overflow: "hidden",
+                    display: "-webkit-box",
+                    WebkitBoxOrient: "vertical",
+                    WebkitLineClamp: 2,
+                    wordBreak: "break-word",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                  title={activityLine}
+                >
+                  {activityLine}
+                </Typography>
+              </Stack>
+              {showProgress && (
+                <LinearProgress
+                  variant={progressPct > 0 ? "determinate" : "indeterminate"}
+                  value={progressPct > 0 ? progressPct : undefined}
+                  sx={{ mt: 0.75, height: 3, borderRadius: 2 }}
                 />
               )}
-              {status?.comfy_ready && (
-                <Chip size="small" label="ComfyUI up" color="info" variant="outlined" />
-              )}
-              {status?.custom_nodes_ready && (
-                <Chip size="small" label="Nodes ready" color="success" variant="outlined" />
-              )}
-              {status?.models_ready && (
-                <Chip size="small" label="Models ready" color="success" />
-              )}
-              {status?.can_generate && (
-                <Chip size="small" label="Ready to generate" color="success" variant="outlined" />
-              )}
-            </Stack>
+            </Box>
+          )}
 
-            {activityLine && (
-              <Box
-                sx={{
-                  mt: 1.5,
-                  px: 1.25,
-                  py: 0.75,
-                  borderRadius: 1,
-                  bgcolor: (t) => (t.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.06)"
-                    : "rgba(0,0,0,0.04)"),
-                  border: 1,
-                  borderColor: "divider",
-                }}
+          <Stack
+            direction="row"
+            spacing={1}
+            alignItems="center"
+            flexWrap="wrap"
+            useFlexGap
+            sx={{ mt: 1.5 }}
+          >
+            {status?.comfy_url && status.comfy_ready && (
+              <Button
+                size="small"
+                variant="outlined"
+                endIcon={<OpenInNewIcon />}
+                href={status.comfy_url}
+                target="_blank"
+                rel="noreferrer"
               >
-                <Stack direction="row" spacing={1} alignItems="center">
-                  {isActive && (
-                    <CircularProgress size={12} thickness={5} sx={{ flexShrink: 0 }} />
-                  )}
-                  <Typography
-                    variant="caption"
-                    component="div"
-                    sx={{
-                      fontFamily: "monospace",
-                      fontSize: "0.75rem",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      flex: 1,
-                      minWidth: 0,
-                    }}
-                    title={activityLine}
-                  >
-                    {activityLine}
-                  </Typography>
-                </Stack>
-                {showProgress && (
-                  <LinearProgress
-                    variant={progressPct > 0 ? "determinate" : "indeterminate"}
-                    value={progressPct > 0 ? progressPct : undefined}
-                    sx={{ mt: 0.75, height: 3, borderRadius: 2 }}
-                  />
-                )}
-              </Box>
+                Open ComfyUI
+              </Button>
             )}
-          </Box>
-        </Stack>
-
-        <Stack direction="row" spacing={1} alignItems="center" flexShrink={0} flexWrap="wrap" useFlexGap>
-          {status?.comfy_url && status.comfy_ready && (
-            <Button
-              size="small"
-              variant="outlined"
-              endIcon={<OpenInNewIcon />}
-              href={status.comfy_url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open ComfyUI
-            </Button>
-          )}
-          {status?.can_setup && (
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={busy === "setup" ? <CircularProgress size={16} /> : <DownloadIcon />}
-              onClick={handleSetup}
-              disabled={!!busy}
-            >
-              {busy === "setup" ? "Starting…" : "Setup pod"}
-            </Button>
-          )}
-          {status?.can_generate && (
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={busy === "free" ? <CircularProgress size={16} /> : <MemoryIcon />}
-              onClick={handleFreeMemory}
-              disabled={!!busy}
-              title="Unload LTX models from GPU VRAM (ComfyUI /free)"
-            >
-              {busy === "free" ? "Freeing…" : "Free GPU memory"}
-            </Button>
-          )}
-          {status?.can_cleanup && (
-            <Button
-              size="small"
-              variant="outlined"
-              color="warning"
-              startIcon={busy === "cleanup" ? <CircularProgress size={16} /> : <DeleteOutlineIcon />}
-              onClick={handleCleanup}
-              disabled={!!busy}
-            >
-              {busy === "cleanup" ? "Removing…" : "Remove LTX setup"}
-            </Button>
-          )}
-          {status?.can_deploy && !status?.comfy_ready && (
-            <Button
-              size="small"
-              variant="contained"
-              startIcon={busy === "deploy" ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
-              onClick={handleDeploy}
-              disabled={!!busy || !status?.configured}
-            >
-              {busy === "deploy" ? "Deploying…" : "Deploy Pod"}
-            </Button>
-          )}
-        </Stack>
+            {status?.can_setup && (
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={busy === "setup" ? <CircularProgress size={16} /> : <DownloadIcon />}
+                onClick={handleSetup}
+                disabled={!!busy}
+              >
+                {busy === "setup" ? "Starting…" : "Setup pod"}
+              </Button>
+            )}
+            {status?.can_generate && (
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={busy === "free" ? <CircularProgress size={16} /> : <MemoryIcon />}
+                onClick={handleFreeMemory}
+                disabled={!!busy}
+                title="Unload LTX models from GPU VRAM (ComfyUI /free)"
+              >
+                {busy === "free" ? "Freeing…" : "Free GPU memory"}
+              </Button>
+            )}
+            {status?.can_cleanup && (
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                startIcon={busy === "cleanup" ? <CircularProgress size={16} /> : <DeleteOutlineIcon />}
+                onClick={handleCleanup}
+                disabled={!!busy}
+              >
+                {busy === "cleanup" ? "Removing…" : "Remove LTX setup"}
+              </Button>
+            )}
+            {status?.can_deploy && !status?.comfy_ready && (
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={busy === "deploy" ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
+                onClick={handleDeploy}
+                disabled={!!busy || !status?.configured}
+              >
+                {busy === "deploy" ? "Deploying…" : "Deploy Pod"}
+              </Button>
+            )}
+          </Stack>
+        </Box>
       </Stack>
 
       {!status?.configured && !loading && (
