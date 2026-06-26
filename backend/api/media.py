@@ -15,6 +15,7 @@ router = APIRouter()
 
 ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 ALLOWED_AUDIO_EXTS = {".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"}
+ALLOWED_VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
 
 
 @router.post("/media/upload")
@@ -76,6 +77,38 @@ async def upload_audio(file: UploadFile = File(...)):
         "filename": filename,
         "url": f"/api/media/{filename}",
         "size_kb": round(len(content) / 1024, 1),
+    }
+
+
+@router.post("/media/upload-video")
+async def upload_video(file: UploadFile = File(...)):
+    """Upload a video clip for long-form project assets."""
+    suffix = Path(file.filename).suffix.lower() if file.filename else ""
+    if suffix not in ALLOWED_VIDEO_EXTS:
+        raise HTTPException(
+            400,
+            f"Unsupported video type: {suffix}. Allowed: {', '.join(sorted(ALLOWED_VIDEO_EXTS))}",
+        )
+
+    max_size = 200 * 1024 * 1024  # 200MB
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(413, f"Video too large. Maximum: 200MB")
+
+    file_id = str(uuid4())[:12]
+    filename = f"{file_id}{suffix}"
+    dest = settings.TMP_DIR / filename
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with open(dest, "wb") as f:
+        f.write(content)
+
+    logger.info("Video uploaded: %s (%.0fKB)", filename, len(content) / 1024)
+    return {
+        "id": file_id,
+        "filename": filename,
+        "url": f"/api/media/{filename}",
+        "size_kb": round(len(content) / 1024, 1),
+        "kind": "video",
     }
 
 

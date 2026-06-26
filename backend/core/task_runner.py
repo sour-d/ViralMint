@@ -1348,3 +1348,433 @@ async def run_batch_generate(
         }, user_id)
 
     logger.info("TASK DONE  batch_generate | job=%s succeeded=%d failed=%d", job_id[:8], len(succeeded), len(failed))
+
+
+async def run_longform_plan(job_id: str, project_id: str, user_id: str = "local"):
+    """Analyze assets + audio, generate storyboard."""
+    import json
+    from pathlib import Path
+    from sqlalchemy import select
+    from backend.agents.job_helper import update_job_status
+    from backend.core.ws_manager import ws_manager
+    from backend.database import AsyncSessionLocal
+    from backend.models.longform import LongFormAsset, LongFormProject
+    from backend.services import asset_catalog_service, prompt_synth_service
+    from backend.services.longform_planner import plan_storyboard
+    from backend.services.longform_orchestrator import attach_preview_urls, save_storyboard
+    from backend.config import settings
+
+    logger.info("TASK START longform_plan | job=%s project=%s", job_id[:8], project_id[:8])
+    try:
+        await update_job_status(job_id, "running", progress_pct=5, current_step="Analyzing audio…")
+        await ws_manager.send({"type": "job_started", "job_id": job_id, "job_type": "longform_plan"}, user_id)
+
+        async with AsyncSessionLocal() as db:
+            proj_r = await db.execute(select(LongFormProject).where(LongFormProject.id == project_id))
+            project = proj_r.scalar_one_or_none()
+            if not project:
+                raise RuntimeError("Project not found")
+
+            ast_r = await db.execute(select(LongFormAsset).where(LongFormAsset.project_id == project_id))
+            asset_rows = ast_r.scalars().all()
+
+        audio_analysis = await prompt_synth_service.analyze_full_audio(Path(project.master_audio_path))
+        project.total_duration_s = audio_analysis["duration_s"]
+        project.narrative_json = json.dumps(audio_analysis)
+
+        await update_job_status(job_id, "running", progress_pct=30, current_step="Cataloging assets…")
+
+        raw_assets = []
+        for row in asset_rows:
+            raw_assets.append({
+                "id": row.id,
+                "kind": row.kind,
+                "path": row.file_path,
+                "media_url": row.media_url,
+                "caption": row.caption,
+            })
+        cataloged = await asset_catalog_service.catalog_assets(raw_assets, project.topic, user_id)
+
+        async with AsyncSessionLocal() as db:
+            for item in cataloged:
+                ast_r = await db.execute(select(LongFormAsset).where(LongFormAsset.id == item["id"]))
+                asset = ast_r.scalar_one_or_none()
+                if asset:
+                    asset.catalog_json = json.dumps(item.get("catalog") or {})
+            await db.commit()
+
+        await update_job_status(job_id, "running", progress_pct=60, current_step="Building storyboard…")
+
+        from backend.config import settings as cfg
+        pexels_key = cfg.PEXELS_API_KEY or ""
+
+        board = await plan_storyboard(
+            topic=project.topic,
+            narrative_blocks=audio_analysis.get("narrative_blocks", []),
+            assets=cataloged,
+            total_duration_s=audio_analysis["duration_s"],
+            aspect_ratio=project.aspect_ratio or "9:16",
+            user_id=user_id,
+        )
+        board["master_audio_url"] = f"/api/media/{Path(project.master_audio_path).name}"
+
+        if pexels_key:
+            from backend.services.pexels_service import search_videos, search_photos
+            from backend.services.longform_planner import ltx_stock_image_query
+            orient = "portrait" if project.aspect_ratio == "9:16" else "landscape"
+            for scene in board.get("scenes", []):
+                src = scene.setdefault("source", {})
+                stype = scene.get("type")
+                text = scene.get("visual_keywords_en") or scene.get("transcript") or scene.get("narration_hint") or project.topic
+                try:
+                    if stype == "stock":
+                        q = src.get("query") or scene.get("visual_keywords_en") or project.topic
+                        vids = await search_videos(q, orientation=orient, per_page=1, api_key=pexels_key)
+                        if vids:
+                            src["preview_thumb_url"] = vids[0].get("url", "")
+                    elif stype == "ltx":
+                        q = src.get("stock_image_query") or ltx_stock_image_query(project.topic, text)
+                        src["stock_image_query"] = q
+                        src.pop("start_image_asset_id", None)
+                        photos = await search_photos(q, orientation=orient, per_page=1, api_key=pexels_key)
+                        if photos:
+                            src["preview_thumb_url"] = photos[0].get("preview_url", "")
+                            src["stock_image_download_url"] = photos[0].get("download_url", "")
+                            from backend.services.longform_orchestrator import save_start_frame
+                            from backend.services.pexels_service import download_photo
+                            tmp_img = cfg.TMP_DIR / f"lf_plan_{scene.get('id')}_start.jpg"
+                            await download_photo(photos[0]["download_url"], tmp_img)
+                            save_start_frame(project_id, scene.get("id"), tmp_img)
+                except Exception as e:
+                    logger.warning("DEBUG:: stock preview fetch failed for %s: %s", scene.get("id"), e)
+
+        attach_preview_urls(board, project_id)
+
+        # Persist start-frame stills for preview (user assets + LTX stock already saved above)
+        from backend.services.longform_orchestrator import save_start_frame
+        from backend.services.ffmpeg_service import extract_thumbnail
+        asset_path_by_id = {a["id"]: a["path"] for a in cataloged}
+        for scene in board.get("scenes", []):
+            stype = scene.get("type")
+            src = scene.get("source") or {}
+            sid = scene.get("id")
+            try:
+                if stype in ("kenburns", "user_image", "screenshot"):
+                    aid = src.get("asset_id")
+                    if aid and aid in asset_path_by_id:
+                        save_start_frame(project_id, sid, Path(asset_path_by_id[aid]))
+                elif stype == "user_video":
+                    aid = src.get("asset_id")
+                    if aid and aid in asset_path_by_id:
+                        thumb = cfg.TMP_DIR / f"lf_plan_{sid}_thumb.jpg"
+                        trim_in = float(src.get("trim_in_s", 0))
+                        await extract_thumbnail(
+                            Path(asset_path_by_id[aid]), thumb,
+                            timestamp=max(0.1, trim_in),
+                        )
+                        save_start_frame(project_id, sid, thumb)
+            except Exception as e:
+                logger.warning("DEBUG:: start frame save failed for %s: %s", sid, e)
+
+        async with AsyncSessionLocal() as db:
+            proj_r = await db.execute(select(LongFormProject).where(LongFormProject.id == project_id))
+            project = proj_r.scalar_one_or_none()
+            save_storyboard(project, board)
+            project.status = "storyboard_ready"
+            project.narrative_json = json.dumps(audio_analysis)
+            project.total_duration_s = audio_analysis["duration_s"]
+            await db.commit()
+
+        await update_job_status(
+            job_id, "success", progress_pct=100,
+            current_step="Storyboard ready",
+            output_data={"project_id": project_id, "scene_count": len(board.get("scenes", []))},
+        )
+        await ws_manager.send({
+            "type": "job_complete",
+            "job_id": job_id,
+            "result": {"project_id": project_id, "storyboard": board},
+        }, user_id)
+        logger.info("TASK DONE  longform_plan | job=%s scenes=%d", job_id[:8], len(board.get("scenes", [])))
+    except Exception as e:
+        logger.error("TASK FAIL  longform_plan | job=%s: %s", job_id[:8], e, exc_info=True)
+        from backend.agents.job_helper import update_job_status as _upd
+        await _upd(job_id, "failed", error_message=str(e))
+        await ws_manager.send({"type": "job_failed", "job_id": job_id, "error": str(e)}, user_id)
+
+
+async def run_longform_generate_all(
+    job_id: str,
+    project_id: str,
+    user_id: str = "local",
+    scene_ids: list[str] | None = None,
+):
+    """Render storyboard scenes sequentially."""
+    import json
+    from pathlib import Path
+    from sqlalchemy import select
+    from backend.agents.job_helper import update_job_status
+    from backend.core.ws_manager import ws_manager
+    from backend.core.api_keys import get_runpod_api_key, get_runpod_pod_id
+    from backend.database import AsyncSessionLocal
+    from backend.models.longform import LongFormProject
+    from backend.models.user_settings import UserSettings
+    from backend.services import runpod_service
+    from backend.services.longform_orchestrator import (
+        attach_preview_urls, load_assets, save_storyboard, scene_segment_path, storyboard_from_project,
+    )
+    from backend.services.longform_renderer import render_scene
+    from backend.config import settings
+
+    from backend.services.longform_planner import _sanitize_ltx_source
+
+    logger.info("TASK START longform_generate | job=%s project=%s", job_id[:8], project_id[:8])
+    try:
+        await ws_manager.send({"type": "job_started", "job_id": job_id, "job_type": "longform_generate"}, user_id)
+
+        async with AsyncSessionLocal() as db:
+            proj_r = await db.execute(select(LongFormProject).where(LongFormProject.id == project_id))
+            project = proj_r.scalar_one_or_none()
+            if not project:
+                raise RuntimeError("Project not found")
+            board = storyboard_from_project(project)
+            assets = await load_assets(db, project_id)
+            assets_by_id = {a["id"]: a for a in assets}
+
+        scenes = board.get("scenes", [])
+        if scene_ids:
+            scenes = [s for s in scenes if s["id"] in scene_ids]
+        else:
+            scenes = [s for s in scenes if s.get("render_status") != "done"]
+
+        total = len(scenes)
+        runpod_base = None
+
+        async with AsyncSessionLocal() as db:
+            us_r = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+            user_settings = us_r.scalar_one_or_none()
+        api_key = get_runpod_api_key(user_settings)
+        pod_id = get_runpod_pod_id(user_settings)
+
+        succeeded = []
+        failed = []
+
+        for idx, scene in enumerate(scenes):
+            sid = scene["id"]
+            if scene.get("type") == "ltx":
+                _sanitize_ltx_source(scene, project.topic)
+            if scene.get("render_status") == "done" and scene_segment_path(project_id, sid).exists():
+                continue
+
+            await ws_manager.send({
+                "type": "longform_scene_start",
+                "project_id": project_id,
+                "scene_id": sid,
+                "index": idx,
+                "total": total,
+            }, user_id)
+
+            scene["render_status"] = "generating"
+            scene["visual_status"] = "generating"
+
+            async with AsyncSessionLocal() as db:
+                proj_r = await db.execute(select(LongFormProject).where(LongFormProject.id == project_id))
+                proj = proj_r.scalar_one_or_none()
+                b = storyboard_from_project(proj)
+                for s in b.get("scenes", []):
+                    if s["id"] == sid:
+                        s.update({"render_status": "generating", "visual_status": "generating"})
+                save_storyboard(proj, b)
+                await db.commit()
+
+            try:
+                if scene.get("type") == "ltx":
+                    if not runpod_base:
+                        status = await runpod_service.get_pod_status(api_key, pod_id)
+                        if not status.get("can_generate"):
+                            raise RuntimeError(status.get("message") or "RunPod not ready")
+                        runpod_base = runpod_service.get_comfy_base_url(status["pod_id"])
+
+                async def on_progress(pct, step):
+                    await ws_manager.send({
+                        "type": "longform_scene_progress",
+                        "project_id": project_id,
+                        "scene_id": sid,
+                        "progress_pct": pct,
+                        "step": step,
+                    }, user_id)
+
+                out, start_frame = await render_scene(
+                    scene=scene,
+                    project={"id": project_id, "master_audio_path": project.master_audio_path},
+                    assets_by_id=assets_by_id,
+                    master_audio_path=Path(project.master_audio_path),
+                    aspect_ratio=project.aspect_ratio or "9:16",
+                    pexels_api_key=settings.PEXELS_API_KEY or "",
+                    runpod_base_url=runpod_base,
+                    on_progress=on_progress if scene.get("type") == "ltx" else None,
+                )
+                dest = scene_segment_path(project_id, sid)
+                import shutil
+                from backend.services.longform_orchestrator import save_start_frame
+                shutil.copy(str(out), str(dest))
+                if start_frame and start_frame.exists():
+                    save_start_frame(project_id, sid, start_frame)
+
+                visual_url = f"/api/longform/projects/{project_id}/scenes/{sid}/visual-preview"
+                start_url = f"/api/longform/projects/{project_id}/scenes/{sid}/start-frame-preview"
+                scene["render_status"] = "done"
+                scene["visual_status"] = "rendered"
+                scene["rendered_video_url"] = visual_url
+                scene["start_frame_preview_url"] = start_url
+                scene["error"] = None
+                succeeded.append(sid)
+
+                async with AsyncSessionLocal() as db:
+                    proj_r = await db.execute(select(LongFormProject).where(LongFormProject.id == project_id))
+                    proj = proj_r.scalar_one_or_none()
+                    b = storyboard_from_project(proj)
+                    for s in b.get("scenes", []):
+                        if s["id"] == sid:
+                            s.update({
+                                "render_status": "done",
+                                "visual_status": "rendered",
+                                "rendered_video_url": visual_url,
+                                "start_frame_preview_url": start_url,
+                                "visual_preview_url": visual_url,
+                            })
+                    attach_preview_urls(b, project_id)
+                    save_storyboard(proj, b)
+                    await db.commit()
+
+                await ws_manager.send({
+                    "type": "longform_scene_done",
+                    "project_id": project_id,
+                    "scene_id": sid,
+                    "rendered_video_url": visual_url,
+                    "start_frame_preview_url": start_url,
+                }, user_id)
+            except Exception as e:
+                logger.error("DEBUG:: scene %s failed: %s", sid, e)
+                scene["render_status"] = "failed"
+                scene["visual_status"] = "failed"
+                scene["error"] = str(e)
+                failed.append({"scene_id": sid, "error": str(e)})
+
+                async with AsyncSessionLocal() as db:
+                    proj_r = await db.execute(select(LongFormProject).where(LongFormProject.id == project_id))
+                    proj = proj_r.scalar_one_or_none()
+                    b = storyboard_from_project(proj)
+                    for s in b.get("scenes", []):
+                        if s["id"] == sid:
+                            s.update({"render_status": "failed", "visual_status": "failed", "error": str(e)})
+                    save_storyboard(proj, b)
+                    await db.commit()
+
+            pct = ((idx + 1) / max(total, 1)) * 100
+            await update_job_status(job_id, "running", progress_pct=pct, current_step=f"Scene {idx + 1}/{total}")
+
+        await update_job_status(
+            job_id, "success" if not failed or succeeded else "failed",
+            progress_pct=100,
+            current_step=f"Rendered {len(succeeded)}/{total} scenes",
+            output_data={"succeeded": succeeded, "failed": failed},
+        )
+        await ws_manager.send({
+            "type": "longform_generate_all_done",
+            "project_id": project_id,
+            "job_id": job_id,
+            "succeeded": len(succeeded),
+            "failed": len(failed),
+        }, user_id)
+        await ws_manager.send({
+            "type": "job_complete",
+            "job_id": job_id,
+            "result": {"project_id": project_id, "succeeded": len(succeeded), "failed": len(failed)},
+        }, user_id)
+        logger.info("TASK DONE  longform_generate | succeeded=%d failed=%d", len(succeeded), len(failed))
+    except Exception as e:
+        logger.error("TASK FAIL  longform_generate | job=%s: %s", job_id[:8], e, exc_info=True)
+        from backend.agents.job_helper import update_job_status as _upd
+        await _upd(job_id, "failed", error_message=str(e))
+        await ws_manager.send({"type": "job_failed", "job_id": job_id, "error": str(e)}, user_id)
+
+
+async def run_longform_assemble(job_id: str, project_id: str, user_id: str = "local"):
+    """Stitch rendered segments + merge master audio."""
+    from pathlib import Path
+    from uuid import uuid4
+    from sqlalchemy import select
+    from backend.agents.job_helper import update_job_status
+    from backend.core.ws_manager import ws_manager
+    from backend.database import AsyncSessionLocal
+    from backend.models.longform import LongFormProject
+    from backend.models.generated_video import GeneratedVideo
+    from backend.services import ffmpeg_service
+    from backend.services.longform_orchestrator import scene_segment_path, storyboard_from_project, save_storyboard
+    from backend.config import settings
+
+    logger.info("TASK START longform_assemble | job=%s project=%s", job_id[:8], project_id[:8])
+    try:
+        await ws_manager.send({"type": "job_started", "job_id": job_id, "job_type": "longform_assemble"}, user_id)
+
+        async with AsyncSessionLocal() as db:
+            proj_r = await db.execute(select(LongFormProject).where(LongFormProject.id == project_id))
+            project = proj_r.scalar_one_or_none()
+            if not project:
+                raise RuntimeError("Project not found")
+            board = storyboard_from_project(project)
+
+        clips = []
+        for scene in sorted(board.get("scenes", []), key=lambda s: s["start_s"]):
+            p = scene_segment_path(project_id, scene["id"])
+            if not p.exists():
+                raise RuntimeError(f"Scene {scene['id']} not rendered yet")
+            clips.append(p)
+
+        await update_job_status(job_id, "running", progress_pct=40, current_step="Stitching segments…")
+        stitched = settings.GENERATED_DIR / f"longform_stitch_{uuid4().hex[:10]}.mp4"
+        await ffmpeg_service.stitch_clips(clips, stitched, transition="fade", transition_duration=0.3)
+
+        await update_job_status(job_id, "running", progress_pct=80, current_step="Merging master audio…")
+        final = settings.GENERATED_DIR / f"longform_{uuid4().hex[:10]}.mp4"
+        await ffmpeg_service.add_audio_to_video(stitched, Path(project.master_audio_path), final)
+
+        async with AsyncSessionLocal() as db:
+            gv = GeneratedVideo(
+                user_id=user_id,
+                title=project.topic[:120],
+                script=project.topic,
+                video_path=str(final),
+                audio_path=project.master_audio_path,
+                aspect_ratio=project.aspect_ratio or "9:16",
+                duration_seconds=int(project.total_duration_s or 0),
+                gen_tier="longform",
+                source_type="longform",
+                status="ready",
+            )
+            db.add(gv)
+            proj_r = await db.execute(select(LongFormProject).where(LongFormProject.id == project_id))
+            proj = proj_r.scalar_one_or_none()
+            proj.final_video_id = gv.id
+            proj.status = "done"
+            await db.commit()
+            await db.refresh(gv)
+
+        await update_job_status(
+            job_id, "success", progress_pct=100,
+            current_step="Final video ready",
+            output_data={"generated_video_id": gv.id},
+        )
+        await ws_manager.send({
+            "type": "job_complete",
+            "job_id": job_id,
+            "result": {"generated_video_id": gv.id, "project_id": project_id},
+        }, user_id)
+        logger.info("TASK DONE  longform_assemble | video=%s", gv.id[:8])
+    except Exception as e:
+        logger.error("TASK FAIL  longform_assemble | job=%s: %s", job_id[:8], e, exc_info=True)
+        from backend.agents.job_helper import update_job_status as _upd
+        await _upd(job_id, "failed", error_message=str(e))
+        await ws_manager.send({"type": "job_failed", "job_id": job_id, "error": str(e)}, user_id)
+

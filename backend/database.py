@@ -63,6 +63,7 @@ async def init_db():
         messaging_config, chat_session, user_profile,
         video_metrics, viral_formula,
         connected_channel, dynamic_template, caption_style,
+        longform,
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -121,6 +121,62 @@ async def download_clip(url: str, output_path: Path) -> Path:
     return output_path
 
 
+async def search_photos(
+    query: str,
+    orientation: str = "portrait",
+    per_page: int = 10,
+    api_key: str = "",
+) -> list[dict]:
+    """
+    Search Pexels for stock photos (used as LTX start frames).
+    Returns entries with preview_url (medium) and download_url (large2x).
+    """
+    if not api_key:
+        raise VideoGenerationError("Pexels API key not configured")
+
+    resp = await _http.get(
+        f"{PEXELS_API}/v1/search",
+        params={"query": query, "orientation": orientation, "per_page": per_page},
+        headers={"Authorization": api_key},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    min_w = MIN_WIDTH_PORTRAIT if orientation == "portrait" else MIN_WIDTH_LANDSCAPE
+    min_h = MIN_HEIGHT_PORTRAIT if orientation == "portrait" else MIN_HEIGHT_LANDSCAPE
+
+    photos = []
+    for p in data.get("photos", []):
+        w = p.get("width", 0)
+        h = p.get("height", 0)
+        if w < min_w or h < min_h:
+            continue
+        is_portrait = h > w
+        want_portrait = orientation == "portrait"
+        if is_portrait != want_portrait:
+            continue
+        src = p.get("src") or {}
+        download_url = src.get("large2x") or src.get("large") or src.get("original")
+        preview_url = src.get("medium") or src.get("small") or download_url
+        if not download_url:
+            continue
+        photos.append({
+            "id": p.get("id"),
+            "url": p.get("url", ""),
+            "download_url": download_url,
+            "preview_url": preview_url,
+            "width": w,
+            "height": h,
+            "alt": p.get("alt", ""),
+        })
+    return photos
+
+
+async def download_photo(url: str, output_path: Path) -> Path:
+    """Download a Pexels photo to local storage."""
+    return await download_clip(url, output_path)
+
+
 async def trim_and_normalize_clip(
     clip_path: Path,
     duration: float,

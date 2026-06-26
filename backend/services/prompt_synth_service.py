@@ -1050,3 +1050,202 @@ def _safe_json_load(text: str) -> dict:
         return json.loads(s)
     except json.JSONDecodeError as e:
         raise RuntimeError(f"Model did not return valid JSON: {e}\n--- raw ---\n{text[:800]}") from e
+
+
+# ── Long-form audio analysis ──────────────────────────────────────────────────
+
+@dataclass
+class NarrativeBlock:
+    start_s: float
+    end_s: float
+    text: str
+    energy: str = "medium"
+
+    def to_dict(self) -> dict:
+        return {
+            "start_s": round(self.start_s, 2),
+            "end_s": round(self.end_s, 2),
+            "text": self.text,
+            "energy": self.energy,
+        }
+
+
+async def transcribe_full_audio(
+    path: Path,
+    language_hint: str | None = None,
+) -> tuple[str, list[TranscriptWord], Optional[str]]:
+    """Whisper transcription for full audio track (no duration cap)."""
+    from backend.services.whisper_service import whisper_service
+
+    whisper_service.load("balanced")
+    result = await whisper_service.transcribe(path, language=language_hint)
+    text = (result.get("text") or "").strip()
+    language = result.get("language")
+    words: list[TranscriptWord] = []
+    for seg in result.get("segments", []) or []:
+        for w in seg.get("words", []) or []:
+            words.append(TranscriptWord(
+                word=str(w.get("word", "")).strip(),
+                start=round(float(w.get("start", 0.0)), 2),
+                end=round(float(w.get("end", 0.0)), 2),
+            ))
+    return text, words, language
+
+
+def segment_transcript(
+    words: list[TranscriptWord],
+    total_duration_s: float,
+    target_block_s: float = 18.0,
+    max_block_s: float = 28.0,
+) -> list[NarrativeBlock]:
+    """
+    Group word timestamps into narrative blocks aligned to pauses.
+    Falls back to fixed windows when no speech detected.
+    """
+    if not words:
+        blocks: list[NarrativeBlock] = []
+        t = 0.0
+        while t < total_duration_s - 0.5:
+            end = min(t + target_block_s, total_duration_s)
+            blocks.append(NarrativeBlock(start_s=t, end_s=end, text="", energy="medium"))
+            t = end
+        return blocks
+
+    blocks = []
+    buf: list[TranscriptWord] = []
+    block_start = words[0].start
+
+    def _flush(end_s: float):
+        nonlocal buf, block_start
+        if not buf:
+            return
+        text = " ".join(w.word for w in buf).strip()
+        if text:
+            blocks.append(NarrativeBlock(
+                start_s=block_start,
+                end_s=end_s,
+                text=text,
+                energy="medium",
+            ))
+        buf = []
+
+    for i, w in enumerate(words):
+        if not buf:
+            block_start = w.start
+        buf.append(w)
+        gap = 0.0
+        if i + 1 < len(words):
+            gap = words[i + 1].start - w.end
+        block_len = w.end - block_start
+        ends_sentence = w.word.rstrip().endswith((".", "!", "?", "…"))
+        if gap > 0.7 or ends_sentence or block_len >= max_block_s:
+            _flush(w.end)
+            continue
+        if block_len >= target_block_s and gap > 0.25:
+            _flush(w.end)
+
+    if buf:
+        _flush(buf[-1].end)
+
+    if blocks and blocks[-1].end_s < total_duration_s - 0.5:
+        blocks.append(NarrativeBlock(
+            start_s=blocks[-1].end_s,
+            end_s=total_duration_s,
+            text="",
+            energy="low",
+        ))
+    elif not blocks:
+        blocks.append(NarrativeBlock(start_s=0, end_s=total_duration_s, text="", energy="medium"))
+
+    return merge_short_narrative_blocks(blocks)
+
+
+def merge_short_narrative_blocks(
+    blocks: list[NarrativeBlock],
+    min_dur: float = 4.0,
+) -> list[NarrativeBlock]:
+    """Merge tiny Whisper blocks so the planner does not create 0–3s scenes."""
+    if not blocks:
+        return blocks
+    out: list[NarrativeBlock] = [blocks[0]]
+    for b in blocks[1:]:
+        prev = out[-1]
+        prev_dur = prev.end_s - prev.start_s
+        cur_dur = b.end_s - b.start_s
+        if cur_dur < min_dur or prev_dur < min_dur:
+            out[-1] = NarrativeBlock(
+                start_s=prev.start_s,
+                end_s=b.end_s,
+                text=f"{prev.text} {b.text}".strip(),
+                energy=prev.energy,
+            )
+        else:
+            out.append(b)
+    # Drop zero-length tail pieces
+    return [b for b in out if b.end_s - b.start_s >= 0.5]
+
+
+async def analyze_full_audio(
+    path: Path,
+    language_hint: str | None = None,
+) -> dict:
+    """Full-track analysis for long-form planning."""
+    import librosa
+
+    y, sr = librosa.load(str(path), sr=SAMPLE_RATE, mono=True)
+    duration_s = float(librosa.get_duration(y=y, sr=sr))
+    text, words, language = await transcribe_full_audio(path, language_hint=language_hint)
+    blocks = segment_transcript(words, duration_s)
+    return {
+        "duration_s": duration_s,
+        "transcript": text,
+        "language": language,
+        "words": [asdict(w) for w in words],
+        "narrative_blocks": [b.to_dict() for b in blocks],
+    }
+
+
+async def translate_narrative_to_english_keywords(
+    topic: str,
+    blocks: list[dict],
+    ai_client=None,
+) -> list[str]:
+    """
+    One batched LLM call: non-English narration -> English stock/LTX search keywords per block.
+    Falls back to topic when AI unavailable.
+    """
+    n = len(blocks)
+    if n == 0:
+        return []
+    if not ai_client:
+        return [topic] * n
+
+    lines = []
+    for i, b in enumerate(blocks):
+        t = (b.get("text") or "").strip()[:250]
+        lines.append(f"{i + 1}. [{b.get('start_s', 0):.0f}-{b.get('end_s', 0):.0f}s] {t or '(silence)'}")
+
+    prompt = f"""Topic: {topic}
+
+Below are timed narration segments (may be Bengali, Hindi, or other languages).
+For EACH segment, write English stock-video search keywords (5-10 words) describing
+what B-roll visuals would match the meaning. Do NOT transliterate — translate meaning.
+
+Segments:
+{chr(10).join(lines)}
+
+Return JSON only: {{"keywords": ["english keywords seg1", "english keywords seg2", ...]}}
+Must have exactly {n} strings in keywords array."""
+    try:
+        raw = await ai_client.chat([{"role": "user", "content": prompt}], max_tokens=800)
+        data = _safe_json_load(raw)
+        kws = data.get("keywords") or []
+        out = []
+        for i in range(n):
+            kw = kws[i].strip() if i < len(kws) and isinstance(kws[i], str) else topic
+            out.append(kw or topic)
+        return out
+    except Exception as e:
+        logger.warning("DEBUG:: English keyword translation failed: %s", e)
+        return [topic] * n
+

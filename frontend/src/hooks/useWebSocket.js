@@ -139,6 +139,18 @@ export default function useWebSocket() {
           return
         }
 
+        if (jobType === "longform_plan") {
+          setTimeout(() => removeJob(msg.job_id), 8000)
+          showSnackbar("Storyboard ready — open Long-Form to review.", "success")
+          return
+        }
+
+        if (jobType === "longform_assemble" && result.generated_video_id) {
+          setTimeout(() => removeJob(msg.job_id), 10000)
+          showSnackbar("Long-form video assembled — see Library.", "success")
+          return
+        }
+
         // Auto-remove from sidebar after 10s
         setTimeout(() => removeJob(msg.job_id), 10000)
 
@@ -247,6 +259,12 @@ export default function useWebSocket() {
       ws.on("morning_digest", (msg) => {
         addMessage({ role: "assistant", content: msg.message })
       }),
+
+      ws.on("longform_scene_done", (msg) => {
+        // Handled by LongFormVideo page; no global action needed
+      }),
+
+      ws.on("longform_generate_all_done", () => {}),
 
       ws.on("action", () => {
         // Actions dispatched by planner backend

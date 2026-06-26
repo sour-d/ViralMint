@@ -182,6 +182,151 @@ async def add_audio_to_video(
     return await asyncio.to_thread(_merge)
 
 
+async def slice_audio(
+    audio_path: Path,
+    start_s: float,
+    end_s: float,
+    output_path: Path = None,
+) -> Path:
+    """Extract a segment from an audio file (for LTX per-scene slices)."""
+    duration = max(0.1, end_s - start_s)
+    if output_path is None:
+        output_path = _tmp(f"audio_slice_{start_s:.1f}_{end_s:.1f}.mp3")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _run():
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start_s),
+            "-i", str(audio_path),
+            "-t", str(duration),
+            "-c:a", "libmp3lame", "-q:a", "2",
+            str(output_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            raise VideoGenerationError(f"FFmpeg audio slice failed: {result.stderr[:500]}")
+        return output_path
+
+    return await asyncio.to_thread(_run)
+
+
+async def extract_last_frame(video_path: Path, output_path: Path = None) -> Path:
+    """Extract the last frame of a video as a JPEG (LTX continuity)."""
+    if output_path is None:
+        output_path = _tmp("last_frame.jpg")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _run():
+        dur = probe_duration(video_path, default=1.0)
+        ts = max(0.0, dur - 0.05)
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(ts),
+            "-i", str(video_path),
+            "-frames:v", "1",
+            "-q:v", "2",
+            str(output_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            raise VideoGenerationError(f"FFmpeg last frame extract failed: {result.stderr[:500]}")
+        return output_path
+
+    return await asyncio.to_thread(_run)
+
+
+async def mute_video(video_path: Path, output_path: Path = None) -> Path:
+    """Strip audio from a video clip."""
+    if output_path is None:
+        output_path = video_path.parent / f"{video_path.stem}_muted.mp4"
+
+    def _run():
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-c:v", "copy", "-an",
+            str(output_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            raise VideoGenerationError(f"FFmpeg mute failed: {result.stderr[:500]}")
+        return output_path
+
+    return await asyncio.to_thread(_run)
+
+
+async def normalize_segment(
+    video_path: Path,
+    duration_s: float,
+    target_w: int,
+    target_h: int,
+    output_path: Path = None,
+    fps: int = 30,
+) -> Path:
+    """Force resolution, fps, and exact duration on a silent segment."""
+    if output_path is None:
+        output_path = _tmp("norm_segment.mp4")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # FFmpeg cannot read and write the same path in one pass.
+    write_path = output_path
+    if video_path.resolve() == output_path.resolve():
+        write_path = _tmp("norm_segment.mp4")
+
+    def _run():
+        vf = (
+            f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+            f"crop={target_w}:{target_h},setsar=1"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-t", str(duration_s),
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-pix_fmt", "yuv420p",
+            "-r", str(fps),
+            "-an",
+            str(write_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip()
+            tail = err[-800:] if len(err) > 800 else err
+            logger.error("DEBUG:: FFmpeg normalize failed: %s", tail)
+            raise VideoGenerationError(f"FFmpeg normalize failed: {tail[:500]}")
+        if write_path.resolve() != output_path.resolve():
+            import shutil
+            shutil.move(str(write_path), str(output_path))
+        return output_path
+
+    return await asyncio.to_thread(_run)
+
+
+async def generate_silent_kenburns_segment(
+    image_path: Path,
+    duration_s: float,
+    aspect_ratio: str = "9:16",
+    output_path: Path = None,
+) -> Path:
+    """Single-image Ken Burns clip with no audio, exact duration."""
+    if output_path is None:
+        output_path = _tmp("kb_segment.mp4")
+    tmp = await generate_kenburns_video(
+        image_paths=[image_path],
+        audio_path=None,
+        output_path=_tmp("kb_raw.mp4"),
+        aspect_ratio=aspect_ratio,
+        duration_per_image=max(int(duration_s), 2),
+    )
+    if aspect_ratio == "9:16":
+        tw, th = 1080, 1920
+    else:
+        tw, th = 1920, 1080
+    return await normalize_segment(tmp, duration_s, tw, th, output_path)
+
+
 async def add_captions(
     video_path: Path,
     segments: list[dict],

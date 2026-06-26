@@ -15,6 +15,7 @@ const Channels = lazy(() => import("./pages/Channels"))
 const Messaging = lazy(() => import("./pages/Messaging"))
 const ClipStudio = lazy(() => import("./pages/ClipStudio"))
 const AiVideo = lazy(() => import("./pages/AiVideo"))
+const LongFormVideo = lazy(() => import("./pages/LongFormVideo"))
 
 const LazyFallback = () => (
   <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100%", minHeight: 200 }}>
@@ -68,6 +69,7 @@ export default function App() {
               <Route path="videos" element={<Videos />} />
               <Route path="stock" element={<StockVideo />} />
               <Route path="ai-video" element={<AiVideo />} />
+              <Route path="longform" element={<LongFormVideo />} />
               <Route path="avatar" element={<Navigate to="/stock" />} />
               <Route path="create" element={<Navigate to="/stock" />} />
               <Route path="cron" element={<Navigate to="/" />} />
