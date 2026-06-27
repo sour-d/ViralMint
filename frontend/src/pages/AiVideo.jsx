@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useEffect, useState } from "react"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import {
   Box, Typography, Button, Stack, Paper, TextField, Chip, CircularProgress, Tooltip,
 } from "@mui/material"
@@ -12,6 +12,7 @@ import ActiveJobsBanner from "../components/create/ActiveJobsBanner"
 import RunPodStatusCard from "../components/runpod/RunPodStatusCard"
 import useAppStore from "../store/appStore"
 import http from "../api/http"
+import { creatorNiches } from "../data/creatorNiches"
 
 const AUDIO_KIND_LABEL = {
   speech: "Speech",
@@ -42,6 +43,7 @@ function labelForKind(kind) {
 
 export default function AiVideo() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const showSnackbar = useAppStore((s) => s.showSnackbar)
   const startJob = useAppStore((s) => s.startJob)
 
@@ -53,6 +55,15 @@ export default function AiVideo() {
   const [generating, setGenerating] = useState(false)
   const [autoPrompting, setAutoPrompting] = useState(false)
   const [autoMeta, setAutoMeta] = useState(null)
+
+  useEffect(() => {
+    const preset = searchParams.get("preset")
+    if (!preset || prompt.trim()) return
+    const niche = creatorNiches.find((item) => item.slug === preset)
+    if (niche) {
+      setPrompt(niche.promptSeed)
+    }
+  }, [prompt, searchParams])
 
   const handleAutoPrompt = async () => {
     if (!startImage || !referenceAudio) {

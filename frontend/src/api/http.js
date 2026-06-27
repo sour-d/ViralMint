@@ -2,7 +2,7 @@ import axios from "axios"
 
 const http = axios.create({
   baseURL: window.location.origin,  // works for both dev (localhost:16888) and packaged Electron app
-  timeout: 30000,
+  timeout: 120000,
 })
 
 http.interceptors.response.use(

@@ -42,8 +42,12 @@ def _hf_url(url: str) -> str:
     return f"{url}{sep}token={token}"
 
 
-def _manifest_model_entries() -> list[dict[str, Any]]:
-    return list(_load_json(MODELS_MANIFEST).get("models", []))
+def _manifest_model_entries(workflow: str | None = None) -> list[dict[str, Any]]:
+    """Return manifest model entries, optionally filtered by workflow name (ltx / ltx-img2vid / z-turbo)."""
+    entries: list[dict[str, Any]] = _load_json(MODELS_MANIFEST).get("models", [])
+    if workflow is None:
+        return entries
+    return [e for e in entries if workflow in (e.get("workflows") or [])]
 
 
 def _workflow_model_urls() -> dict[str, dict[str, str]]:
@@ -93,14 +97,21 @@ def _resolve_model_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def workflow_class_types(workflow_file: str = "video_ltx2_3_ia2v-api.json") -> set[str]:
-    with open(WORKFLOWS_DIR / workflow_file, encoding="utf-8") as f:
-        workflow = json.load(f)
-    return {
-        node["class_type"]
-        for node in workflow.values()
-        if isinstance(node, dict) and "class_type" in node
-    }
+def workflow_class_types(*workflow_files: str) -> set[str]:
+    """Union of all class types across one or more workflow files."""
+    types: set[str] = set()
+    for wf in workflow_files or ("video_ltx2_3_ia2v-api.json",):
+        path = WORKFLOWS_DIR / wf
+        if not path.is_file():
+            continue
+        with open(path, encoding="utf-8") as f:
+            workflow = json.load(f)
+        types.update(
+            node["class_type"]
+            for node in workflow.values()
+            if isinstance(node, dict) and "class_type" in node
+        )
+    return types
 
 
 async def filter_missing_model_entries(
@@ -134,8 +145,8 @@ async def filter_missing_model_entries(
     return [e for e in candidates if e["filename"] in on_disk_missing]
 
 
-async def assess_pod(base_url: str) -> dict[str, Any]:
-    """Check custom nodes and models in one pass (single object_info + /models)."""
+async def assess_pod(base_url: str, workflow: str | None = None) -> dict[str, Any]:
+    """Check custom nodes and models. Optionally filter by workflow (ltx / ltx-img2vid / z-turbo)."""
     registered: set[str] = set()
     model_lists: dict[str, list[str]] = {}
 
@@ -148,14 +159,21 @@ async def assess_pod(base_url: str) -> dict[str, Any]:
         for key, val in models_data.items():
             if isinstance(val, list):
                 model_lists[key] = [str(v) for v in val]
+    elif isinstance(models_data, list):
+        # ComfyUI 0.3+ returns ["checkpoints", "loras", ...] — no file listing.
+        # Populate folder keys so _check_models can proceed to disk check.
+        for folder in models_data:
+            model_lists.setdefault(str(folder), [])
 
-    nodes = _check_nodes(registered)
-    models = _check_models(model_lists)
+    # Z-turbo and ltx-img2vid use only built-in / same-as-ltx nodes — skip node check
+    nodes: dict[str, Any] = {"ready": True, "missing_class_types": [], "packs_needed": []}
+    if workflow not in ("z-turbo", "ltx-img2vid"):
+        nodes = _check_nodes(registered)
+
+    models = _check_models(model_lists, workflow=workflow)
     if not models["ready"]:
-        still_missing = await filter_missing_model_entries(
-            base_url,
-            [_resolve_model_entry(m) for m in _manifest_model_entries()],
-        )
+        entries = [_resolve_model_entry(m) for m in _manifest_model_entries(workflow=workflow)]
+        still_missing = await filter_missing_model_entries(base_url, entries)
         if not still_missing:
             models = {
                 **models,
@@ -172,7 +190,10 @@ async def assess_pod(base_url: str) -> dict[str, Any]:
 
 
 def _check_nodes(registered: set[str], required: Optional[set[str]] = None) -> dict:
-    required = required or workflow_class_types()
+    required = required or workflow_class_types(
+        "video_ltx2_3_ia2v-api.json",
+        "niche2_txt2img.json",
+    )
     missing_types: list[str] = []
     missing_core: list[str] = []
     for class_type in sorted(required):
@@ -201,19 +222,19 @@ def _check_nodes(registered: set[str], required: Optional[set[str]] = None) -> d
     }
 
 
-def _check_models(model_lists: dict[str, list[str]]) -> dict:
-    manifest = _load_json(MODELS_MANIFEST)
+def _check_models(model_lists: dict[str, list[str]], workflow: str | None = None) -> dict:
+    entries = _manifest_model_entries(workflow=workflow)
     all_names = {name for files in model_lists.values() for name in files}
     present, missing = [], []
 
-    for entry in manifest.get("models", []):
+    for entry in entries:
         name = entry["filename"]
         folder = entry.get("folder", "")
         found = name in all_names or name in model_lists.get(folder, [])
         item = {"filename": name, "folder": folder, "hf_url": entry.get("hf_url")}
         (present if found else missing).append(item)
 
-    return {"ready": not missing, "present": present, "missing": missing, "total": len(manifest.get("models", []))}
+    return {"ready": not missing, "present": present, "missing": missing, "total": len(entries)}
 
 
 async def _installed_pack_ids(base_url: str) -> set[str]:
@@ -306,36 +327,47 @@ async def _download_model(base_url: str, entry: dict) -> tuple[bool, str]:
 async def setup_pod(
     base_url: str,
     on_progress: Optional[Callable[[float, str], Awaitable[None]]] = None,
+    workflow: str | None = None,
 ) -> dict[str, Any]:
-    """Install models via ComfyUI core; custom nodes via ComfyUI-Manager queue."""
+    """Install models (optionally filtered by workflow) via ComfyUI core; nodes via Manager."""
     if on_progress:
         await on_progress(2, "Checking pod…")
 
-    assessment = await assess_pod(base_url)
-    if assessment["custom_nodes_ready"] and assessment["models_ready"]:
+    assessment = await assess_pod(base_url, workflow=workflow)
+
+    all_ready = assessment["custom_nodes_ready"] and assessment["models_ready"]
+    if all_ready:
+        wf_label = {"ltx": "LTX", "ltx-img2vid": "LTX img2vid", "z-turbo": "Z-turbo"}.get(workflow or "", "All")
         return {
             "ok": True,
             "skipped": True,
-            "message": "Pod already set up — all models and custom nodes are present.",
+            "message": f"{wf_label} models already present.",
             "custom_nodes": {"skipped": True, "message": "Custom nodes already present."},
             "models": {"skipped": True, "message": "All models already present."},
         }
 
-    models_out = await _setup_models(base_url, on_progress)
+    models_out = await _setup_models(base_url, on_progress, workflow=workflow)
 
-    nodes_out: dict[str, Any]
-    if not await mgr.manager_available(base_url):
-        nodes_out = {
-            "queued": [],
-            "failed": [],
-            "message": "ComfyUI-Manager not available — install custom nodes manually.",
-        }
-    else:
-        nodes_out = await _setup_nodes(base_url, on_progress, start_queue=False)
-        if nodes_out.get("queued"):
-            if on_progress:
-                await on_progress(92, "Starting custom node install queue…")
-            await mgr.queue_start(base_url)
+    # Only install nodes for LTX (Z-turbo uses built-in nodes)
+    nodes_out: dict[str, Any] = {
+        "queued": [],
+        "failed": [],
+        "skipped": True,
+        "message": "No custom nodes needed for this workflow.",
+    }
+    if workflow not in ("z-turbo", "ltx-img2vid"):
+        if not await mgr.manager_available(base_url):
+            nodes_out = {
+                "queued": [],
+                "failed": [],
+                "message": "ComfyUI-Manager not available — install custom nodes manually.",
+            }
+        else:
+            nodes_out = await _setup_nodes(base_url, on_progress, start_queue=False)
+            if nodes_out.get("queued"):
+                if on_progress:
+                    await on_progress(92, "Starting custom node install queue…")
+                await mgr.queue_start(base_url)
 
     skipped = bool(
         models_out.get("skipped")
@@ -489,9 +521,19 @@ async def _setup_nodes(
 async def _setup_models(
     base_url: str,
     on_progress: Optional[Callable[[float, str], Awaitable[None]]] = None,
+    workflow: str | None = None,
 ) -> dict[str, Any]:
-    all_entries = [_resolve_model_entry(m) for m in _manifest_model_entries()]
-    to_download = await filter_missing_model_entries(base_url, all_entries)
+    entries = [_resolve_model_entry(m) for m in _manifest_model_entries(workflow=workflow)]
+    if not entries:
+        return {
+            "downloaded": [],
+            "queued": [],
+            "failed": [],
+            "skipped": True,
+            "message": "No models listed for this workflow.",
+        }
+
+    to_download = await filter_missing_model_entries(base_url, entries)
     if not to_download:
         return {
             "downloaded": [],

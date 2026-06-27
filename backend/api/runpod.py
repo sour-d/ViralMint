@@ -2,17 +2,27 @@
 # Copyright (c) 2025-2026 ViralMint Contributors
 """REST /api/runpod — RunPod Pod status and deploy."""
 import logging
+import json
+from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 
 from backend.database import AsyncSessionLocal
 from backend.models.user_settings import UserSettings
 from backend.core.api_keys import get_runpod_api_key, get_runpod_pod_id
 from backend.services import runpod_service
+from backend.services.runpod_setup import MODELS_MANIFEST, NODES_MANIFEST
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/runpod", tags=["runpod"])
+WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
+WORKFLOW_FILES = {
+    "api": "video_ltx2_3_ia2v-api.json",
+    "ui": "video_ltx2_3_ia2v.json",
+    "mapping": "runpod_mapping.json",
+}
 
 
 async def _get_user_settings() -> UserSettings | None:
@@ -49,6 +59,134 @@ async def runpod_status():
         await _save_pod_id(status["pod_id"])
 
     return status
+
+
+@router.get("/workflow")
+async def runpod_workflow(type: str = "ltx"):
+    """Return workflow metadata for the ComfyUI setup tab.
+
+    Accepts ``type=ltx`` (LTX audio→video), ``type=ltx-img2vid`` (LTX image→video),
+    or ``type=z-turbo`` (Z-turbo txt2img).
+    """
+    # Shared model list helper
+    def _manifest_models(workflow_tag: str) -> list[dict]:
+        models = []
+        try:
+            with open(MODELS_MANIFEST, encoding="utf-8") as f:
+                models = list((json.load(f) or {}).get("models", []))
+            models = [m for m in models if workflow_tag in (m.get("workflows") or [])]
+        except Exception:
+            models = []
+        return [{"filename": m["filename"], "folder": m.get("folder", "checkpoints")} for m in models if m.get("filename")]
+
+    def _manifest_node_packs() -> list[dict]:
+        packs = []
+        try:
+            with open(NODES_MANIFEST, encoding="utf-8") as f:
+                packs = list((json.load(f) or {}).get("packs", []))
+        except Exception:
+            packs = []
+        return [{"id": p.get("id"), "title": p.get("title", p.get("id"))} for p in packs if p.get("id")]
+
+    if type == "z-turbo":
+        niche2_mapping = WORKFLOWS_DIR / "runpod_mapping_niche2.json"
+        if not niche2_mapping.exists():
+            return {
+                "kind": "z-turbo",
+                "workflow_file": "niche2_txt2img.json",
+                "mapping_file": "runpod_mapping_niche2.json",
+                "audio_required": False,
+                "required_models": [],
+                "required_node_packs": [],
+                "configured": False,
+                "download_urls": {
+                    "workflow": "/api/runpod/workflow/download?kind=niche2_txt2img",
+                    "mapping": "/api/runpod/workflow/download?kind=niche2_mapping",
+                },
+            }
+        with open(niche2_mapping, encoding="utf-8") as f:
+            mapping = json.load(f)
+        return {
+            "kind": "z-turbo",
+            "workflow_file": mapping.get("txt2img", {}).get("workflow_file", "niche2_txt2img.json"),
+            "mapping_file": "runpod_mapping_niche2.json",
+            "audio_required": False,
+            "required_models": mapping.get("required_models", []),
+            "required_node_packs": mapping.get("required_node_packs", []),
+            "configured": all(
+                mapping.get("txt2img", {}).get(k) and mapping["txt2img"][k] != "REPLACE_ME"
+                for k in ("prompt_node_id", "seed_node_id", "save_image_node_id")
+            ),
+            "download_urls": {
+                "workflow": "/api/runpod/workflow/download?kind=niche2_txt2img",
+                "mapping": "/api/runpod/workflow/download?kind=niche2_mapping",
+            },
+        }
+
+    # LTX image→video workflow
+    if type == "ltx-img2vid":
+        wf_file = "niche2_img2vid.json"
+        wf_path = WORKFLOWS_DIR / wf_file
+        wf_ok = wf_path.exists()
+        return {
+            "kind": "ltx-img2vid",
+            "workflow_file": wf_file if wf_ok else None,
+            "mapping_file": "runpod_mapping_niche2.json",
+            "audio_required": False,
+            "configured": wf_ok,
+            "required_models": _manifest_models("ltx-img2vid"),
+            "required_node_packs": _manifest_node_packs(),
+            "download_urls": {
+                "workflow": f"/api/runpod/workflow/download?kind=niche2_img2vid" if wf_ok else None,
+                "mapping": "/api/runpod/workflow/download?kind=niche2_mapping",
+            },
+        }
+
+    # Default: LTX audio→video workflow
+    mapping = runpod_service.load_workflow_mapping()
+    mapping_configured = all(
+        mapping.get(k) and str(mapping[k]) != "REPLACE_ME"
+        for k in ("prompt_node_id",)
+    )
+
+    return {
+        "kind": "ltx",
+        "workflow_file": mapping.get("workflow_file", WORKFLOW_FILES["api"]),
+        "ui_workflow_file": WORKFLOW_FILES["ui"],
+        "mapping_file": WORKFLOW_FILES["mapping"],
+        "audio_required": bool(mapping.get("audio_required", False)),
+        "configured": mapping_configured,
+        "download_urls": {
+            "api": "/api/runpod/workflow/download?kind=api",
+            "ui": "/api/runpod/workflow/download?kind=ui",
+            "mapping": "/api/runpod/workflow/download?kind=mapping",
+        },
+        "required_models": _manifest_models("ltx"),
+        "required_node_packs": _manifest_node_packs(),
+    }
+
+
+@router.get("/workflow/download")
+async def runpod_workflow_download(kind: str = "api"):
+    """Download a workflow, UI export, or mapping file."""
+    NICHE2_FILES = {
+        "niche2_txt2img": "niche2_txt2img.json",
+        "niche2_img2vid": "niche2_img2vid.json",
+        "niche2_mapping": "runpod_mapping_niche2.json",
+    }
+    filename = WORKFLOW_FILES.get(kind) or NICHE2_FILES.get(kind)
+    if not filename:
+        raise HTTPException(400, detail="Invalid kind. Options: api, ui, mapping, niche2_txt2img, niche2_img2vid, niche2_mapping")
+
+    path = WORKFLOWS_DIR / filename
+    if not path.is_file():
+        raise HTTPException(404, detail=f"File not found: {filename}")
+
+    return FileResponse(
+        path,
+        media_type="application/json",
+        filename=filename,
+    )
 
 
 @router.post("/deploy")
@@ -138,10 +276,16 @@ async def runpod_deploy():
 
 @router.post("/setup")
 @router.post("/install-models")
-async def runpod_setup():
-    """Queue missing custom nodes and LTX models on the pod via ComfyUI-Manager."""
+async def runpod_setup(type: str = "all"):
+    """Queue missing models and custom nodes for the given workflow type.
+
+    Accepts ``type=ltx``, ``type=z-turbo``, or ``type=all`` (default).
+    """
     from backend.agents.job_helper import create_job
     from backend.core.task_runner import run_install_runpod_models, dispatch
+
+    if type not in ("ltx", "z-turbo", "all"):
+        raise HTTPException(400, detail="type must be ltx, z-turbo, or all")
 
     user_settings = await _get_user_settings()
     api_key = get_runpod_api_key(user_settings)
@@ -152,21 +296,18 @@ async def runpod_setup():
     status = await runpod_service.get_pod_status(api_key, stored_pod_id)
     if not status.get("comfy_ready"):
         raise HTTPException(503, detail="ComfyUI is not ready on the pod")
-    if status.get("can_generate"):
-        return {
-            "message": "Pod is already set up — nothing to download or install.",
-            "job_id": None,
-            "skipped": True,
-        }
 
-    job = await create_job("runpod_install_models", "local", {})
+    wf_label = {"ltx": "LTX", "ltx-img2vid": "LTX img2vid", "z-turbo": "Z-turbo", "all": "all"}[type]
+
+    job = await create_job("runpod_install_models", "local", {"workflow_type": type})
     dispatch(run_install_runpod_models(job_id=job.id, user_id="local"))
     return {
         "job_id": job.id,
+        "type": type,
         "message": (
-            "Setup started: models download via ComfyUI (same as Download to Pod), "
-            "custom nodes via ComfyUI-Manager. Restart ComfyUI after node installs. "
-            "Large models may take 30–90+ minutes."
+            f"Setup started for {wf_label} — models download via ComfyUI, "
+            f"custom nodes via ComfyUI-Manager. Restart ComfyUI after node installs. "
+            f"Large models may take 30–90+ minutes."
         ),
     }
 
@@ -225,3 +366,63 @@ async def runpod_cleanup(body: dict = Body(default_factory=dict)):
     if not result.get("ok"):
         raise HTTPException(502, detail=result.get("message", "Cleanup failed"))
     return result
+
+
+@router.get("/models-status")
+async def runpod_models_status(type: str = "all"):
+    """Return model download status for a specific workflow (ltx / z-turbo / all).
+
+    Returns ``{ present: [...], missing: [...], total: N, present_count: M }``.
+    """
+    from backend.services.runpod_setup import assess_pod, _manifest_model_entries
+
+    user_settings = await _get_user_settings()
+    api_key = get_runpod_api_key(user_settings)
+    stored_pod_id = get_runpod_pod_id(user_settings)
+    if not api_key or not stored_pod_id:
+        return {"present": [], "missing": _manifest_model_entries(type), "total": 0, "present_count": 0}
+
+    status = await runpod_service.get_pod_status(api_key, stored_pod_id)
+    if not status.get("comfy_ready"):
+        entries = _manifest_model_entries(type if type != "all" else None)
+        return {"present": [], "missing": entries, "total": len(entries), "present_count": 0}
+
+    wf = type if type != "all" else None
+    base_url = runpod_service.get_comfy_base_url(status["pod_id"])
+    assessment = await assess_pod(base_url, workflow=wf)
+    ms = assessment.get("models_status", {})
+    present = ms.get("present", [])
+    missing = ms.get("missing", [])
+    return {
+        "present": present,
+        "missing": missing,
+        "total": ms.get("total", len(present) + len(missing)),
+        "present_count": len(present),
+    }
+
+
+@router.post("/delete-models")
+async def runpod_delete_models(type: str = "all"):
+    """Return file paths of models for the given workflow on the pod (manual deletion)."""
+    from backend.services.runpod_setup import _manifest_model_entries
+
+    if type not in ("ltx", "z-turbo", "ltx-img2vid", "all"):
+        raise HTTPException(400, detail="type must be ltx, ltx-img2vid, z-turbo, or all")
+
+    wf = type if type != "all" else None
+    entries = _manifest_model_entries(workflow=wf)
+    paths = [
+        f"/workspace/runpod-slim/ComfyUI/models/{e.get('folder', 'checkpoints')}/{e['filename']}"
+        for e in entries
+    ]
+
+    wf_label = {"ltx": "LTX", "ltx-img2vid": "LTX img2vid", "z-turbo": "Z-turbo", "all": "all"}[type]
+    return {
+        "ok": True,
+        "workflow": type,
+        "paths": paths,
+        "message": (
+            f"Delete these {wf_label} model files on the pod (RunPod file browser or terminal). "
+            "ViralMint cannot remove large files via API."
+        ),
+    }

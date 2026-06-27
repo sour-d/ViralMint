@@ -10,32 +10,28 @@ import { pluginNavItems } from "../plugins"
 import MenuIcon from "@mui/icons-material/MenuOutlined"
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft"
 import ChevronRightIcon from "@mui/icons-material/ChevronRight"
-import ChatIcon from "@mui/icons-material/ChatBubbleOutline"
+import HomeIcon from "@mui/icons-material/HomeOutlined"
+import CloudQueueIcon from "@mui/icons-material/CloudQueueOutlined"
+import MovieCreationIcon from "@mui/icons-material/MovieCreationOutlined"
 import VideoLibraryIcon from "@mui/icons-material/OndemandVideoOutlined"
-import PhotoLibraryIcon from "@mui/icons-material/PhotoLibraryOutlined"
-import SensorsIcon from "@mui/icons-material/SensorsOutlined"
-import PhoneIphoneIcon from "@mui/icons-material/PhoneIphoneOutlined"
-import ContentCutIcon from "@mui/icons-material/ContentCutOutlined"
-import MovieFilterIcon from "@mui/icons-material/MovieFilterOutlined"
-import SmartDisplayIcon from "@mui/icons-material/SmartDisplayOutlined"
 import SettingsIcon from "@mui/icons-material/SettingsOutlined"
+import { creatorNiches } from "../data/creatorNiches"
 
 const DRAWER_WIDTH = 240
 const COLLAPSED_WIDTH = 64
 
 const navItems = [
-  { to: "/",          icon: <ChatIcon />,             label: "Chat" },
-  { to: "/channels",  icon: <SensorsIcon />,          label: "My Channels" },
-  { to: "/clips",     icon: <ContentCutIcon />,       label: "Clip Studio" },
-  { to: "/videos",    icon: <VideoLibraryIcon />,     label: "Library" },
-  { to: "/stock",     icon: <PhotoLibraryIcon />,     label: "Stock Video" },
-  { to: "/ai-video",  icon: <SmartDisplayIcon />,     label: "AI Video" },
-  { to: "/longform",  icon: <MovieFilterIcon />,      label: "Long-Form" },
-  { to: "/messaging", icon: <PhoneIphoneIcon />,      label: "Messaging" },
-  ...pluginNavItems.filter(i => (i.position || "top") === "top"),
+  { to: "/creator", icon: <HomeIcon />, label: "Creator Home" },
+  { to: "/comfyui", icon: <CloudQueueIcon />, label: "ComfyUI Setup" },
+  ...creatorNiches.map((niche) => ({
+    to: niche.slug === "niche1" ? "/niche1" : `/niche/${niche.slug}`,
+    icon: <MovieCreationIcon />,
+    label: niche.label,
+  })),
 ]
 
 const bottomItems = [
+  { to: "/videos", icon: <VideoLibraryIcon />, label: "Library" },
   ...pluginNavItems.filter(i => i.position === "bottom"),
   { to: "/settings",  icon: <SettingsIcon />,     label: "Settings" },
 ]
@@ -53,7 +49,7 @@ export default function Layout() {
   const drawerWidth = collapsed && !isNarrow ? COLLAPSED_WIDTH : DRAWER_WIDTH
 
   const isActive = (to) => {
-    if (to === "/") return location.pathname === "/"
+    if (to === "/creator") return location.pathname === "/" || location.pathname === "/creator"
     return location.pathname.startsWith(to)
   }
 

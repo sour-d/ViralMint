@@ -1,5 +1,5 @@
 {
-  "description": "Models for video_ltx2_3_ia2v-api.json. Downloaded on-pod via ComfyUI POST /download_model during Setup pod (URLs also in video_ltx2_3_ia2v.json).",
+  "description": "Models for LTX video (video_ltx2_3_ia2v-api.json) and Z-turbo txt2img (niche2_txt2img.json). Each model has a workflows list so setup can filter by workflow type.",
   "models": [
     {
       "folder": "checkpoints",
@@ -8,16 +8,18 @@
       "save_path": "default",
       "name": "LTX-2.3 22B Dev FP8",
       "filename": "ltx-2.3-22b-dev-fp8.safetensors",
-      "hf_url": "https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-dev-fp8.safetensors"
+      "hf_url": "https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-dev-fp8.safetensors",
+      "workflows": ["ltx", "ltx-img2vid"]
     },
     {
       "folder": "loras",
       "type": "lora",
       "base": "LTX-2.3",
       "save_path": "default",
-      "name": "LTX-2.3 22B Distilled LoRA 384",
-      "filename": "ltx-2.3-22b-distilled-lora-384.safetensors",
-      "hf_url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-lora-384.safetensors"
+      "name": "LTX-2.3 22B Distilled LoRA (dynamic)",
+      "filename": "ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors",
+      "hf_url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-lora-384.safetensors",
+      "workflows": ["ltx", "ltx-img2vid"]
     },
     {
       "folder": "loras",
@@ -26,7 +28,8 @@
       "save_path": "default",
       "name": "Gemma 3 12B IT Abliterated LoRA",
       "filename": "gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors",
-      "hf_url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors"
+      "hf_url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors",
+      "workflows": ["ltx", "ltx-img2vid"]
     },
     {
       "folder": "latent_upscale_models",
@@ -35,7 +38,8 @@
       "save_path": "default",
       "name": "LTX-2.3 Spatial Upscaler x2",
       "filename": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
-      "hf_url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+      "hf_url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+      "workflows": ["ltx", "ltx-img2vid"]
     },
     {
       "folder": "text_encoders",
@@ -44,7 +48,38 @@
       "save_path": "default",
       "name": "Gemma 3 12B IT FP4 Mixed",
       "filename": "gemma_3_12B_it_fp4_mixed.safetensors",
-      "hf_url": "https://huggingface.co/Comfy-Org/ltxv-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors"
+      "hf_url": "https://huggingface.co/Comfy-Org/ltxv-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors",
+      "workflows": ["ltx", "ltx-img2vid"]
+    },
+    {
+      "folder": "diffusion_models",
+      "type": "diffusion_model",
+      "base": "Z-Image",
+      "save_path": "default",
+      "name": "Z-Image Turbo BF16",
+      "filename": "z_image_turbo_bf16.safetensors",
+      "hf_url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors",
+      "workflows": ["z-turbo"]
+    },
+    {
+      "folder": "text_encoders",
+      "type": "text_encoders",
+      "base": "Z-Image",
+      "save_path": "default",
+      "name": "Qwen 3 4B CLIP",
+      "filename": "qwen_3_4b.safetensors",
+      "hf_url": "https://huggingface.co/Comfy-Org/z_image/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors",
+      "workflows": ["z-turbo"]
+    },
+    {
+      "folder": "vae",
+      "type": "vae",
+      "base": "Z-Image",
+      "save_path": "default",
+      "name": "Z-Image VAE",
+      "filename": "ae.safetensors",
+      "hf_url": "https://huggingface.co/Comfy-Org/z_image/resolve/main/split_files/vae/ae.safetensors",
+      "workflows": ["z-turbo"]
     }
   ]
 }

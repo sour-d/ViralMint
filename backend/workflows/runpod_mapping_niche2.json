@@ -1,0 +1,30 @@
+{
+  "txt2img": {
+    "workflow_file": "niche2_txt2img.json",
+    "prompt_node_id": "104:90",
+    "prompt_input_key": "text",
+    "seed_node_id": "104:92",
+    "seed_input_key": "seed",
+    "save_image_node_id": "60",
+    "save_image_input_prefix_key": "filename_prefix"
+  },
+  "img2vid": {
+    "workflow_file": "niche2_img2vid.json",
+    "load_image_node_id": "269",
+    "load_image_input_key": "image",
+    "prompt_node_id": "320:319",
+    "prompt_input_key": "value",
+    "duration_node_id": "320:301",
+    "duration_input_key": "value",
+    "frame_rate_node_id": "320:300",
+    "frame_rate_input_key": "value",
+    "save_video_node_id": "75",
+    "save_video_input_prefix_key": "filename_prefix"
+  },
+  "required_models": [
+    { "filename": "z_image_turbo_bf16.safetensors", "folder": "diffusion_models" },
+    { "filename": "qwen_3_4b.safetensors", "folder": "text_encoders" },
+    { "filename": "ae.safetensors", "folder": "vae" }
+  ],
+  "required_node_packs": []
+}
