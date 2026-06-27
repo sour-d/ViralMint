@@ -341,7 +341,7 @@ async def generate_segment_videos(
 # ── Subtitle overlay pre-processing ──────────────────────────────────
 
 SUBTITLE_DIR = VIDEOS_DIR / "subtitled"
-_SUBTITLE_FONT = "font/PlayfairDisplay-VariableFont_wght.ttf"
+_SUBTITLE_FONT = str(Path(__file__).resolve().parent.parent.parent / "font" / "PlayfairDisplay-VariableFont_wght.ttf")
 
 
 def _render_subtitle_clip(src_path: str, text: str, out_path: str):
