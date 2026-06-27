@@ -409,6 +409,61 @@ async def _overlay_subtitles(videos: list[dict]) -> list[dict]:
     return result
 
 
+# ── Segment trimming (5s → aligned duration) ─────────────────────────
+
+TRIMMED_DIR = OUTPUT_DIR / "trimmed"
+
+
+async def _trim_segment_videos(videos: list[dict]) -> list[dict]:
+    """Losslessly trim each 5s segment video to its aligned ``duration``.
+
+    Falls back to the original file if trimming fails.
+    """
+    TRIMMED_DIR.mkdir(parents=True, exist_ok=True)
+    result = []
+
+    for i, vid in enumerate(videos):
+        src = Path(vid["path"])
+        target = vid.get("duration", 3.0)
+
+        if not src.exists() or target <= 0:
+            result.append(vid)
+            continue
+
+        # If already at or under target, use as-is
+        probe = await asyncio_run_subprocess([
+            "ffprobe", "-v", "error", "-show_entries",
+            "format=duration", "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(src),
+        ])
+        actual = float((probe.stdout or b"").decode().strip()) if probe.returncode == 0 else 0
+        if actual <= target:
+            result.append(vid)
+            continue
+
+        trimmed_path = TRIMMED_DIR / f"trim_{src.stem}_{uuid.uuid4().hex[:8]}.mp4"
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(src.resolve()),
+            "-t", str(target),
+            "-c", "copy",
+            "-map", "0:v:0",
+            "-map", "0:a:0?",
+            str(trimmed_path.resolve()),
+        ]
+        proc = await asyncio_run_subprocess(cmd)
+        if proc.returncode != 0:
+            logger.warning("Trim failed for segment %s: %s", i, src.name)
+            result.append(vid)
+        elif trimmed_path.exists():
+            result.append({**vid, "path": str(trimmed_path), "filename": trimmed_path.name})
+        else:
+            result.append(vid)
+
+    return result
+
+
 # ── Step 6: Compilation Video (concat segment clips + audio) ───────────
 
 async def render_compilation_video(
@@ -428,13 +483,16 @@ async def render_compilation_video(
     # ── Overlay subtitles on each segment video ──────────────────────
     subtitled = await _overlay_subtitles(videos)
 
+    # ── Trim per-segment 5s clips to aligned audio durations ─────────
+    trimmed = await _trim_segment_videos(subtitled)
+
     concat_file = OUTPUT_DIR / f"concat_vids_{uuid.uuid4().hex[:8]}.txt"
     output_filename = f"anime_lofi_final_{uuid.uuid4().hex[:8]}.mp4"
     output_path = OUTPUT_DIR / output_filename
 
     # Use ffprobe to get actual video durations for concat demuxer
     concat_lines = []
-    for i, vid in enumerate(subtitled):
+    for i, vid in enumerate(trimmed):
         vid_path = Path(vid["path"])
         if not vid_path.exists():
             logger.warning("Video file not found, skipping: %s", vid_path)
@@ -460,7 +518,7 @@ async def render_compilation_video(
         concat_lines.append(f"duration {dur:.3f}")
 
         # Last entry needs a duplicate with tiny duration for concat demuxer
-        if i == len(subtitled) - 1:
+        if i == len(trimmed) - 1:
             concat_lines.append(f"file '{vid_path.resolve()}'")
             concat_lines.append("duration 0.001")
 
@@ -507,10 +565,12 @@ async def render_compilation_video(
 
     concat_file.unlink(missing_ok=True)
 
-    # Clean up subtitled temp files
+    # Clean up temp files
+    import shutil
     if SUBTITLE_DIR.exists():
-        import shutil
         shutil.rmtree(SUBTITLE_DIR, ignore_errors=True)
+    if TRIMMED_DIR.exists():
+        shutil.rmtree(TRIMMED_DIR, ignore_errors=True)
 
     return {
         "filename": output_filename,
