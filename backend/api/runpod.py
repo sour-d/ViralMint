@@ -284,8 +284,8 @@ async def runpod_setup(type: str = "all"):
     from backend.agents.job_helper import create_job
     from backend.core.task_runner import run_install_runpod_models, dispatch
 
-    if type not in ("ltx", "z-turbo", "all"):
-        raise HTTPException(400, detail="type must be ltx, z-turbo, or all")
+    if type not in ("ltx", "z-turbo", "ltx-img2vid", "all"):
+        raise HTTPException(400, detail="type must be ltx, ltx-img2vid, z-turbo, or all")
 
     user_settings = await _get_user_settings()
     api_key = get_runpod_api_key(user_settings)
