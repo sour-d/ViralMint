@@ -1,5 +1,8 @@
 """Anime Lo-fi — Script → Audio → Image-per-segment → Raw Video API."""
+import json
 import logging
+import shutil
+from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse
@@ -10,12 +13,46 @@ from backend.services.anime_lofi_service import (
     generate_script, generate_audio, transcribe_audio, transcribe_and_segment,
     align_segment_durations, generate_segment_images, generate_segment_videos,
     render_raw_video, render_compilation_video,
-    AUDIO_DIR, SEGMENTS_DIR, OUTPUT_DIR,
+    AUDIO_DIR, SEGMENTS_DIR, OUTPUT_DIR, STORAGE,
 )
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/anime-lofi", tags=["anime-lofi"])
+
+SESSIONS_DIR = STORAGE / "sessions"
+
+
+def _session_path(session_id: str) -> Path:
+    return SESSIONS_DIR / session_id
+
+
+def _list_sessions():
+    if not SESSIONS_DIR.exists():
+        return []
+    sessions = []
+    for d in sorted(SESSIONS_DIR.iterdir(), reverse=True):
+        if not d.is_dir():
+            continue
+        meta = d / "session.json"
+        if meta.exists():
+            try:
+                data = json.loads(meta.read_text())
+                sessions.append({
+                    "session_id": data["session_id"],
+                    "created_at": data.get("created_at", ""),
+                    "updated_at": data.get("updated_at", ""),
+                    "user_idea": data.get("user_idea", "")[:80],
+                    "segments_count": len(data.get("segments", [])),
+                    "step": data.get("active_step", 0),
+                    "has_audio": bool(data.get("audio_info")),
+                    "has_images": bool(data.get("images")),
+                    "has_videos": bool(data.get("videos")),
+                    "has_final": bool(data.get("final_video")),
+                })
+            except (json.JSONDecodeError, KeyError):
+                continue
+    return sessions
 
 
 async def _get_user_settings():
@@ -304,6 +341,88 @@ async def api_render_video_compilation(body: dict = Body(...)):
     except Exception as e:
         logger.error(f"Compilation failed: {e}")
         raise HTTPException(500, detail=str(e))
+
+
+# ── Session persistence ────────────────────────────────────────────
+
+
+@router.post("/session/create")
+async def api_create_session(body: dict = Body(default_factory=dict)):
+    """Create a new session folder with a timestamp-based ID."""
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.now()
+    session_id = now.strftime("session_%Y%m%d_%H%M%S")
+    sess_dir = _session_path(session_id)
+    sess_dir.mkdir(exist_ok=True)
+    state = {
+        "session_id": session_id,
+        "created_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+        "user_idea": body.get("user_idea", ""),
+        "full_script": "",
+        "active_step": 0,
+        "segments": [],
+        "audio_info": None,
+        "images": [],
+        "videos": [],
+        "final_video": None,
+    }
+    (sess_dir / "session.json").write_text(json.dumps(state, indent=2, default=str))
+    return {"ok": True, "session_id": session_id}
+
+
+@router.put("/session/save")
+async def api_save_session(body: dict = Body(...)):
+    """Save full pipeline state to an existing session."""
+    session_id = body.get("session_id", "")
+    state = body.get("state", {})
+    if not session_id:
+        raise HTTPException(400, detail="session_id required")
+    sess_dir = _session_path(session_id)
+    if not sess_dir.exists():
+        raise HTTPException(404, detail=f"Session {session_id} not found")
+    meta = sess_dir / "session.json"
+    try:
+        current = json.loads(meta.read_text()) if meta.exists() else {}
+    except (json.JSONDecodeError, FileNotFoundError):
+        current = {}
+    current.update(state)
+    current["session_id"] = session_id
+    current["updated_at"] = datetime.now().isoformat()
+    meta.write_text(json.dumps(current, indent=2, default=str))
+    return {"ok": True}
+
+
+@router.get("/sessions")
+async def api_list_sessions():
+    """List all saved sessions (newest first)."""
+    return {"ok": True, "sessions": _list_sessions()}
+
+
+@router.get("/sessions/{session_id}")
+async def api_load_session(session_id: str):
+    """Load full state for a saved session."""
+    sess_dir = _session_path(session_id)
+    if not sess_dir.exists():
+        raise HTTPException(404, detail=f"Session {session_id} not found")
+    meta = sess_dir / "session.json"
+    if not meta.exists():
+        raise HTTPException(404, detail=f"Session metadata not found")
+    try:
+        state = json.loads(meta.read_text())
+    except json.JSONDecodeError:
+        raise HTTPException(500, detail="Corrupted session file")
+    return {"ok": True, **state}
+
+
+@router.delete("/sessions/{session_id}")
+async def api_delete_session(session_id: str):
+    """Delete a session and its directory."""
+    sess_dir = _session_path(session_id)
+    if not sess_dir.exists():
+        raise HTTPException(404, detail=f"Session {session_id} not found")
+    shutil.rmtree(str(sess_dir), ignore_errors=True)
+    return {"ok": True}
 
 
 @router.get("/media/{filename:path}")

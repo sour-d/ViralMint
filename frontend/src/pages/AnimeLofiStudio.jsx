@@ -16,7 +16,7 @@ import SaveIcon from "@mui/icons-material/Save"
 import FolderOpenIcon from "@mui/icons-material/FolderOpen"
 
 const STORAGE_KEY = "anime_lofi_studio"
-const SNAPSHOTS_KEY = "anime_lofi_snapshots"
+const LAST_SESSION_KEY = "anime_lofi_last_session"
 
 const STEPS = [
   { label: "Write Script", icon: <AutoAwesomeIcon /> },
@@ -34,29 +34,38 @@ function loadSavedState() {
   } catch { return null }
 }
 
-function saveState(state) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)) } catch { /* ignore quota errors */ }
+function saveLocalState(state) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)) } catch { /* ignore */ }
 }
 
 function clearSavedState() {
-  try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
+  try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(LAST_SESSION_KEY) } catch { /* ignore */ }
 }
 
-function loadSnapshots() {
-  try { return JSON.parse(localStorage.getItem(SNAPSHOTS_KEY) || "[]") } catch { return [] }
+// ── Backend session helpers ─────────────────────────────────────
+
+async function createSession(idea) {
+  const res = await http.post("/api/anime-lofi/session/create", { user_idea: idea })
+  return res.data.session_id
 }
 
-function saveSnapshot(state, label) {
-  const snapshots = loadSnapshots()
-  snapshots.push({ label, savedAt: Date.now(), state })
-  // Keep most recent 20
-  try { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots.slice(-20))) } catch { /* ignore */ }
+async function saveSession(sessionId, state) {
+  if (!sessionId) return
+  try { await http.put("/api/anime-lofi/session/save", { session_id: sessionId, state }) } catch { /* best-effort */ }
 }
 
-function deleteSnapshot(index) {
-  const snapshots = loadSnapshots()
-  snapshots.splice(index, 1)
-  try { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots)) } catch { /* ignore */ }
+async function loadSession(sessionId) {
+  const res = await http.get(`/api/anime-lofi/sessions/${sessionId}`)
+  return res.data
+}
+
+async function listSessions() {
+  const res = await http.get("/api/anime-lofi/sessions")
+  return res.data.sessions || []
+}
+
+async function deleteSessionBackend(sessionId) {
+  try { await http.delete(`/api/anime-lofi/sessions/${sessionId}`) } catch { /* ignore */ }
 }
 
 export default function AnimeLofiStudio() {
@@ -79,7 +88,6 @@ export default function AnimeLofiStudio() {
   const [videos, setVideos] = useState(saved?.videos ?? [])
   const [videoProgress, setVideoProgress] = useState(null)
   const videoPollRef = useRef(null)
-  // Track multiple retry polls: { [index]: { job_id, interval } }
   const retryPollsRef = useRef({})
   const retryImagePollsRef = useRef({})
 
@@ -87,11 +95,10 @@ export default function AnimeLofiStudio() {
   const [renderLoading, setRenderLoading] = useState(false)
   const [renderError, setRenderError] = useState(null)
 
-  // Resume / snapshot state
-  const [showResumeBanner, setShowResumeBanner] = useState(!!saved)
-  const [snapshotOpen, setSnapshotOpen] = useState(false)
-  const [loadOpen, setLoadOpen] = useState(false)
-  const [snapshots, setSnapshots] = useState(loadSnapshots())
+  // Session management
+  const [sessionId, setSessionId] = useState(null)
+  const [sessionList, setSessionList] = useState([])
+  const [sessionOpen, setSessionOpen] = useState(false)
 
   const stopPolling = (ref) => {
     if (ref.current) { clearInterval(ref.current); ref.current = null }
@@ -108,13 +115,54 @@ export default function AnimeLofiStudio() {
     retryImagePollsRef.current = {}
   }
 
-  // Persist state on every relevant change
+  // Build the full state object
+  const currentState = { activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo }
+
+  // Persist to localStorage (immediate fallback)
   useEffect(() => {
-    saveState({ activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo })
-  }, [activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo])
+    saveLocalState(currentState)
+  }, [currentState.activeStep, currentState.userIdea, currentState.segments,
+      currentState.fullScript, currentState.audioInfo, currentState.images,
+      currentState.videos, currentState.finalVideo])
+
+  // Persist to backend session with 2s debounce
+  const saveTimerRef = useRef(null)
+  useEffect(() => {
+    if (!sessionId) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      saveSession(sessionId, currentState)
+    }, 2000)
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
+  }, [sessionId, currentState.activeStep, currentState.userIdea, currentState.segments,
+      currentState.fullScript, currentState.audioInfo, currentState.images,
+      currentState.videos, currentState.finalVideo])
 
   useEffect(() => {
     return () => { stopPolling(pollRef); stopPolling(videoPollRef); stopRetryPolls(); stopRetryImagePolls() }
+  }, [])
+
+  // On mount: try to restore last session from backend
+  useEffect(() => {
+    (async () => {
+      try {
+        const lastId = localStorage.getItem(LAST_SESSION_KEY)
+        if (lastId) {
+          const state = await loadSession(lastId)
+          setSessionId(lastId)
+          setActiveStep(state.active_step ?? 0)
+          setUserIdea(state.user_idea ?? "")
+          setSegments(state.segments ?? [])
+          setFullScript(state.full_script ?? "")
+          setAudioInfo(state.audio_info ?? null)
+          setImages(state.images ?? [])
+          setVideos(state.videos ?? [])
+          setFinalVideo(state.final_video ?? null)
+        }
+      } catch { /* session stale or deleted — ignore */ }
+      // Always refresh the session list
+      try { setSessionList(await listSessions()) } catch { /* ignore */ }
+    })()
   }, [])
 
   // ── Step 0: Script ────────────────────────────────────────────
@@ -123,9 +171,18 @@ export default function AnimeLofiStudio() {
     if (!userIdea.trim()) return
     setLoading(true); setError(null)
     try {
+      // Create a session on first pipeline action
+      let sid = sessionId
+      if (!sid) {
+        sid = await createSession(userIdea)
+        setSessionId(sid)
+        localStorage.setItem(LAST_SESSION_KEY, sid)
+      }
       const res = await http.post("/api/anime-lofi/generate-script", { user_idea: userIdea })
       setSegments(res.data.segments || [])
       setFullScript(res.data.full_script || "")
+      // Refresh session list
+      setSessionList(await listSessions())
     } catch (e) { setError(e.response?.data?.detail || "Script gen failed") }
     finally { setLoading(false) }
   }
@@ -356,30 +413,37 @@ export default function AnimeLofiStudio() {
     finally { setRenderLoading(false) }
   }
 
-  // ── Snapshot helpers ──────────────────────────────────────────
+  // ── Session helpers ───────────────────────────────────────────
 
-  const handleSaveSnapshot = useCallback(() => {
-    const label = `Session ${new Date().toLocaleString()}`
-    saveSnapshot({ activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo }, label)
-    setSnapshots(loadSnapshots())
-  }, [activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo])
-
-  const handleLoadSnapshot = useCallback((snap) => {
-    const s = snap.state
-    setActiveStep(s.activeStep ?? 0)
-    setUserIdea(s.userIdea ?? "")
-    setSegments(s.segments ?? [])
-    setFullScript(s.fullScript ?? "")
-    setAudioInfo(s.audioInfo ?? null)
-    setImages(s.images ?? [])
-    setVideos(s.videos ?? [])
-    setFinalVideo(s.finalVideo ?? null)
-    setLoadOpen(false)
+  const handleLoadSession = useCallback(async (sid) => {
+    try {
+      const state = await loadSession(sid)
+      setSessionId(sid)
+      setActiveStep(state.active_step ?? 0)
+      setUserIdea(state.user_idea ?? "")
+      setSegments(state.segments ?? [])
+      setFullScript(state.full_script ?? "")
+      setAudioInfo(state.audio_info ?? null)
+      setImages(state.images ?? [])
+      setVideos(state.videos ?? [])
+      setFinalVideo(state.final_video ?? null)
+      localStorage.setItem(LAST_SESSION_KEY, sid)
+      setSessionOpen(false)
+    } catch (e) { setError("Failed to load session") }
   }, [])
 
-  const handleDeleteSnapshot = useCallback((index) => {
-    deleteSnapshot(index)
-    setSnapshots(loadSnapshots())
+  const handleDeleteSession = useCallback(async (sid) => {
+    await deleteSessionBackend(sid)
+    setSessionList(await listSessions())
+    if (sessionId === sid) {
+      clearSavedState()
+      setSessionId(null)
+      localStorage.removeItem(LAST_SESSION_KEY)
+    }
+  }, [sessionId])
+
+  const handleRefreshSessions = useCallback(async () => {
+    setSessionList(await listSessions())
   }, [])
 
   // ── Render ────────────────────────────────────────────────────
@@ -395,15 +459,19 @@ export default function AnimeLofiStudio() {
         }}>
           <Stack spacing={1}>
             <Chip icon={<AutoAwesomeIcon sx={{ fontSize: 16 }} />} label="Lo-Fi Anime Shorts" color="primary" variant="outlined" sx={{ width: "fit-content" }} />
-            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Typography variant="h4" sx={{ fontWeight: 800, letterSpacing: -0.6 }}>Studio</Typography>
-              <Stack direction="row" spacing={0.5}>
-                <Tooltip title="Save current session">
-                  <IconButton size="small" onClick={handleSaveSnapshot}><SaveIcon fontSize="small" /></IconButton>
-                </Tooltip>
-                <Tooltip title="Load a saved session">
-                  <IconButton size="small" onClick={() => setLoadOpen(true)}><FolderOpenIcon fontSize="small" /></IconButton>
-                </Tooltip>
+              <Stack direction="row" spacing={1} alignItems="center">
+                {sessionId && (
+                  <Typography variant="caption" sx={{ color: "text.secondary", fontFamily: "monospace", fontSize: 11 }}>
+                    {sessionId.replace("session_", "")}
+                  </Typography>
+                )}
+                <Button size="small" variant="outlined" onClick={() => { handleRefreshSessions(); setSessionOpen(true) }}
+                  startIcon={<FolderOpenIcon />}
+                  sx={{ borderRadius: 2, textTransform: "none", fontSize: 13, fontWeight: 600 }}>
+                  Sessions
+                </Button>
               </Stack>
             </Stack>
             <Typography sx={{ color: "text.secondary", maxWidth: 700 }}>
@@ -414,20 +482,22 @@ export default function AnimeLofiStudio() {
 
         {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
 
-        {/* Resume banner */}
-        {showResumeBanner && (
+        {/* Resume banner — shown when a last-session key exists */}
+        {sessionId && !activeStep && !segments.length && !images.length && (
           <Alert severity="info" icon={<FolderOpenIcon />}
             action={
               <Stack direction="row" spacing={1}>
-                <Button size="small" color="inherit" onClick={() => setShowResumeBanner(false)}>Resume</Button>
-                <Button size="small" color="inherit" onClick={() => { clearSavedState(); setShowResumeBanner(false); window.location.reload() }}>
-                  Start Fresh
-                </Button>
+                <Button size="small" color="inherit" onClick={() => setSessionOpen(true)}>Browse Sessions</Button>
+                <Button size="small" color="inherit" onClick={() => {
+                  clearSavedState(); setSessionId(null)
+                  setActiveStep(0); setUserIdea(""); setSegments([]); setFullScript("")
+                  setAudioInfo(null); setImages([]); setVideos([]); setFinalVideo(null)
+                }}>Start Fresh</Button>
               </Stack>
             }
             sx={{ "& .MuiAlert-action": { pt: 0 } }}
           >
-            You have a saved session from earlier.
+            Resuming previous session ({sessionId.replace("session_", "")}).
           </Alert>
         )}
 
@@ -720,7 +790,7 @@ export default function AnimeLofiStudio() {
                         Re-render
                       </Button>
                       <Button variant="contained" onClick={() => {
-                        clearSavedState()
+                        clearSavedState(); setSessionId(null)
                         setUserIdea(""); setFullScript(""); setSegments([])
                         setAudioInfo(null); setImages([]); setVideos([])
                         setFinalVideo(null); setActiveStep(0)
@@ -737,30 +807,31 @@ export default function AnimeLofiStudio() {
         </Stack>
       </Stack>
 
-      {/* Load Snapshot dialog */}
-      <Dialog open={loadOpen} onClose={() => setLoadOpen(false)} maxWidth="sm" fullWidth>
+      {/* Session picker dialog */}
+      <Dialog open={sessionOpen} onClose={() => setSessionOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Saved Sessions</DialogTitle>
         <DialogContent>
-          {snapshots.length === 0 ? (
+          {sessionList.length === 0 ? (
             <Typography variant="body2" sx={{ color: "text.secondary", py: 2 }}>
-              No saved sessions yet. Use the <SaveIcon sx={{ verticalAlign: "middle", fontSize: 18 }} /> button to save one.
+              No saved sessions yet. Start generating a script and one will be created automatically.
             </Typography>
           ) : (
             <List dense>
-              {[...snapshots].reverse().map((snap, i) => {
-                const idx = snapshots.length - 1 - i
-                const steps = snap.state.activeStep ?? 0
-                const segs = snap.state.segments?.length ?? 0
-                const hasVids = (snap.state.videos?.length ?? 0) > 0
+              {sessionList.map((s) => {
+                const active = s.session_id === sessionId
+                const hasVids = s.has_videos
                 return (
-                  <ListItemButton key={idx} onClick={() => handleLoadSnapshot(snap)}
-                    sx={{ borderRadius: 1, mb: 0.5, border: "1px solid", borderColor: "divider" }}>
+                  <ListItemButton key={s.session_id}
+                    selected={active}
+                    onClick={() => handleLoadSession(s.session_id)}
+                    sx={{ borderRadius: 1, mb: 0.5, border: "1px solid", borderColor: active ? "primary.main" : "divider" }}>
                     <ListItemText
-                      primary={snap.label}
-                      secondary={`Step ${steps + 1} · ${segs} segments${hasVids ? " · videos ready" : ""}`}
-                      primaryTypographyProps={{ fontWeight: 600 }}
+                      primary={s.session_id.replace("session_", "")}
+                      secondary={`Step ${(s.step || 0) + 1} · ${s.segments_count || 0} segments${s.has_audio ? " · audio" : ""}${s.has_images ? " · images" : ""}${hasVids ? " · videos" : ""}${s.has_final ? " · final" : ""}${s.user_idea ? ` — "${s.user_idea}"` : ""}`}
+                      primaryTypographyProps={{ fontFamily: "monospace", fontWeight: 600, fontSize: 14 }}
+                      secondaryTypographyProps={{ fontSize: 12 }}
                     />
-                    <IconButton edge="end" size="small" onClick={(e) => { e.stopPropagation(); handleDeleteSnapshot(idx) }}
+                    <IconButton edge="end" size="small" onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.session_id) }}
                       sx={{ ml: 1, opacity: 0.4, "&:hover": { opacity: 1 } }}>
                       <ReplayIcon fontSize="small" />
                     </IconButton>
@@ -771,7 +842,7 @@ export default function AnimeLofiStudio() {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setLoadOpen(false)}>Close</Button>
+          <Button onClick={() => { handleRefreshSessions(); setSessionOpen(false) }}>Close</Button>
         </DialogActions>
       </Dialog>
     </Box>
