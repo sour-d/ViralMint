@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import {
   Box, Stack, Typography, Paper, Button, CircularProgress,
   Stepper, Step, StepLabel, Chip, Card, CardMedia,
   TextField, Alert, Grid, Tooltip, IconButton,
+  Dialog, DialogTitle, DialogContent, DialogActions, List, ListItemButton, ListItemText,
 } from "@mui/material"
 import http from "../api/http"
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome"
@@ -11,8 +12,11 @@ import MusicNoteIcon from "@mui/icons-material/MusicNote"
 import ImageIcon from "@mui/icons-material/Image"
 import VideocamIcon from "@mui/icons-material/Videocam"
 import ReplayIcon from "@mui/icons-material/Replay"
+import SaveIcon from "@mui/icons-material/Save"
+import FolderOpenIcon from "@mui/icons-material/FolderOpen"
 
 const STORAGE_KEY = "anime_lofi_studio"
+const SNAPSHOTS_KEY = "anime_lofi_snapshots"
 
 const STEPS = [
   { label: "Write Script", icon: <AutoAwesomeIcon /> },
@@ -36,6 +40,23 @@ function saveState(state) {
 
 function clearSavedState() {
   try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
+}
+
+function loadSnapshots() {
+  try { return JSON.parse(localStorage.getItem(SNAPSHOTS_KEY) || "[]") } catch { return [] }
+}
+
+function saveSnapshot(state, label) {
+  const snapshots = loadSnapshots()
+  snapshots.push({ label, savedAt: Date.now(), state })
+  // Keep most recent 20
+  try { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots.slice(-20))) } catch { /* ignore */ }
+}
+
+function deleteSnapshot(index) {
+  const snapshots = loadSnapshots()
+  snapshots.splice(index, 1)
+  try { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots)) } catch { /* ignore */ }
 }
 
 export default function AnimeLofiStudio() {
@@ -65,6 +86,12 @@ export default function AnimeLofiStudio() {
   const [finalVideo, setFinalVideo] = useState(saved?.finalVideo ?? null)
   const [renderLoading, setRenderLoading] = useState(false)
   const [renderError, setRenderError] = useState(null)
+
+  // Resume / snapshot state
+  const [showResumeBanner, setShowResumeBanner] = useState(!!saved)
+  const [snapshotOpen, setSnapshotOpen] = useState(false)
+  const [loadOpen, setLoadOpen] = useState(false)
+  const [snapshots, setSnapshots] = useState(loadSnapshots())
 
   const stopPolling = (ref) => {
     if (ref.current) { clearInterval(ref.current); ref.current = null }
@@ -329,6 +356,32 @@ export default function AnimeLofiStudio() {
     finally { setRenderLoading(false) }
   }
 
+  // ── Snapshot helpers ──────────────────────────────────────────
+
+  const handleSaveSnapshot = useCallback(() => {
+    const label = `Session ${new Date().toLocaleString()}`
+    saveSnapshot({ activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo }, label)
+    setSnapshots(loadSnapshots())
+  }, [activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo])
+
+  const handleLoadSnapshot = useCallback((snap) => {
+    const s = snap.state
+    setActiveStep(s.activeStep ?? 0)
+    setUserIdea(s.userIdea ?? "")
+    setSegments(s.segments ?? [])
+    setFullScript(s.fullScript ?? "")
+    setAudioInfo(s.audioInfo ?? null)
+    setImages(s.images ?? [])
+    setVideos(s.videos ?? [])
+    setFinalVideo(s.finalVideo ?? null)
+    setLoadOpen(false)
+  }, [])
+
+  const handleDeleteSnapshot = useCallback((index) => {
+    deleteSnapshot(index)
+    setSnapshots(loadSnapshots())
+  }, [])
+
   // ── Render ────────────────────────────────────────────────────
 
   return (
@@ -342,7 +395,17 @@ export default function AnimeLofiStudio() {
         }}>
           <Stack spacing={1}>
             <Chip icon={<AutoAwesomeIcon sx={{ fontSize: 16 }} />} label="Lo-Fi Anime Shorts" color="primary" variant="outlined" sx={{ width: "fit-content" }} />
-            <Typography variant="h4" sx={{ fontWeight: 800, letterSpacing: -0.6 }}>Studio</Typography>
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Typography variant="h4" sx={{ fontWeight: 800, letterSpacing: -0.6 }}>Studio</Typography>
+              <Stack direction="row" spacing={0.5}>
+                <Tooltip title="Save current session">
+                  <IconButton size="small" onClick={handleSaveSnapshot}><SaveIcon fontSize="small" /></IconButton>
+                </Tooltip>
+                <Tooltip title="Load a saved session">
+                  <IconButton size="small" onClick={() => setLoadOpen(true)}><FolderOpenIcon fontSize="small" /></IconButton>
+                </Tooltip>
+              </Stack>
+            </Stack>
             <Typography sx={{ color: "text.secondary", maxWidth: 700 }}>
               Describe a theme or feeling. The AI writes a poetic script, generates images with Z-turbo, and animates each segment with LTX video.
             </Typography>
@@ -350,6 +413,23 @@ export default function AnimeLofiStudio() {
         </Paper>
 
         {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+
+        {/* Resume banner */}
+        {showResumeBanner && (
+          <Alert severity="info" icon={<FolderOpenIcon />}
+            action={
+              <Stack direction="row" spacing={1}>
+                <Button size="small" color="inherit" onClick={() => setShowResumeBanner(false)}>Resume</Button>
+                <Button size="small" color="inherit" onClick={() => { clearSavedState(); setShowResumeBanner(false); window.location.reload() }}>
+                  Start Fresh
+                </Button>
+              </Stack>
+            }
+            sx={{ "& .MuiAlert-action": { pt: 0 } }}
+          >
+            You have a saved session from earlier.
+          </Alert>
+        )}
 
         <Stack direction={{ xs: "column", md: "row" }} spacing={3}>
           <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, minWidth: 220, alignSelf: "flex-start" }}>
@@ -656,6 +736,44 @@ export default function AnimeLofiStudio() {
           </Paper>
         </Stack>
       </Stack>
+
+      {/* Load Snapshot dialog */}
+      <Dialog open={loadOpen} onClose={() => setLoadOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Saved Sessions</DialogTitle>
+        <DialogContent>
+          {snapshots.length === 0 ? (
+            <Typography variant="body2" sx={{ color: "text.secondary", py: 2 }}>
+              No saved sessions yet. Use the <SaveIcon sx={{ verticalAlign: "middle", fontSize: 18 }} /> button to save one.
+            </Typography>
+          ) : (
+            <List dense>
+              {[...snapshots].reverse().map((snap, i) => {
+                const idx = snapshots.length - 1 - i
+                const steps = snap.state.activeStep ?? 0
+                const segs = snap.state.segments?.length ?? 0
+                const hasVids = (snap.state.videos?.length ?? 0) > 0
+                return (
+                  <ListItemButton key={idx} onClick={() => handleLoadSnapshot(snap)}
+                    sx={{ borderRadius: 1, mb: 0.5, border: "1px solid", borderColor: "divider" }}>
+                    <ListItemText
+                      primary={snap.label}
+                      secondary={`Step ${steps + 1} · ${segs} segments${hasVids ? " · videos ready" : ""}`}
+                      primaryTypographyProps={{ fontWeight: 600 }}
+                    />
+                    <IconButton edge="end" size="small" onClick={(e) => { e.stopPropagation(); handleDeleteSnapshot(idx) }}
+                      sx={{ ml: 1, opacity: 0.4, "&:hover": { opacity: 1 } }}>
+                      <ReplayIcon fontSize="small" />
+                    </IconButton>
+                  </ListItemButton>
+                )
+              })}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setLoadOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
