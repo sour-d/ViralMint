@@ -1,4 +1,5 @@
 """Anime Lo-fi — Script → Audio → Image-per-segment → Raw Video."""
+import importlib.util
 import json
 import logging
 import random
@@ -15,6 +16,8 @@ from backend.services.tts_service import generate_tts, TTSProvider
 from backend.services.whisper_service import whisper_service
 
 logger = logging.getLogger(__name__)
+
+_HAS_MOVIEPY = importlib.util.find_spec("moviepy") is not None
 
 STORAGE = Path("storage/anime_lofi")
 AUDIO_DIR = STORAGE / "audio"
@@ -335,6 +338,77 @@ async def generate_segment_videos(
         return result
 
 
+# ── Subtitle overlay pre-processing ──────────────────────────────────
+
+SUBTITLE_DIR = VIDEOS_DIR / "subtitled"
+_SUBTITLE_FONT = "font/PlayfairDisplay-VariableFont_wght.ttf"
+
+
+def _render_subtitle_clip(src_path: str, text: str, out_path: str):
+    """Synchronous helper — render one video segment with subtitle overlaid."""
+    from moviepy.editor import VideoFileClip
+    from backend.services.subtitle_overlay_service import add_subtitle
+
+    clip = VideoFileClip(src_path)
+    composited = add_subtitle(
+        video_clip=clip,
+        text=text,
+        start_time=0,
+        end_time=clip.duration,
+        font_path=_SUBTITLE_FONT,
+    )
+    composited.write_videofile(
+        out_path,
+        codec="libx264",
+        audio_codec="aac",
+        preset="fast",
+        logger=None,
+    )
+    clip.close()
+    composited.close()
+
+
+async def _overlay_subtitles(videos: list[dict]) -> list[dict]:
+    """Overlay per-segment voiceover text on each video clip.
+
+    Falls back to the original clips if moviepy or ImageMagick is unavailable.
+    """
+    if not _HAS_MOVIEPY:
+        logger.warning("moviepy not installed — skipping subtitle overlay")
+        return videos
+
+    SUBTITLE_DIR.mkdir(parents=True, exist_ok=True)
+    loop = asyncio.get_event_loop()
+    result = []
+
+    for i, vid in enumerate(videos):
+        text = (vid.get("segment_text") or "").strip()
+        src_path = Path(vid["path"])
+
+        if not text or not src_path.exists():
+            result.append(vid)
+            continue
+
+        stem = src_path.stem
+        out_path = SUBTITLE_DIR / f"sub_{stem}_{uuid.uuid4().hex[:8]}.mp4"
+
+        try:
+            await loop.run_in_executor(
+                None, _render_subtitle_clip, str(src_path), text, str(out_path),
+            )
+        except Exception as exc:
+            logger.warning("Subtitle overlay failed for segment %s: %s", i, exc)
+            result.append(vid)
+            continue
+
+        if out_path.exists():
+            result.append({**vid, "path": str(out_path), "filename": out_path.name})
+        else:
+            result.append(vid)
+
+    return result
+
+
 # ── Step 6: Compilation Video (concat segment clips + audio) ───────────
 
 async def render_compilation_video(
@@ -351,13 +425,16 @@ async def render_compilation_video(
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio not found: {audio_path}")
 
+    # ── Overlay subtitles on each segment video ──────────────────────
+    subtitled = await _overlay_subtitles(videos)
+
     concat_file = OUTPUT_DIR / f"concat_vids_{uuid.uuid4().hex[:8]}.txt"
     output_filename = f"anime_lofi_final_{uuid.uuid4().hex[:8]}.mp4"
     output_path = OUTPUT_DIR / output_filename
 
     # Use ffprobe to get actual video durations for concat demuxer
     concat_lines = []
-    for i, vid in enumerate(videos):
+    for i, vid in enumerate(subtitled):
         vid_path = Path(vid["path"])
         if not vid_path.exists():
             logger.warning("Video file not found, skipping: %s", vid_path)
@@ -383,7 +460,7 @@ async def render_compilation_video(
         concat_lines.append(f"duration {dur:.3f}")
 
         # Last entry needs a duplicate with tiny duration for concat demuxer
-        if i == len(videos) - 1:
+        if i == len(subtitled) - 1:
             concat_lines.append(f"file '{vid_path.resolve()}'")
             concat_lines.append("duration 0.001")
 
@@ -429,6 +506,11 @@ async def render_compilation_video(
         raise RuntimeError(f"FFmpeg compilation failed (code {proc.returncode}): {stderr}")
 
     concat_file.unlink(missing_ok=True)
+
+    # Clean up subtitled temp files
+    if SUBTITLE_DIR.exists():
+        import shutil
+        shutil.rmtree(SUBTITLE_DIR, ignore_errors=True)
 
     return {
         "filename": output_filename,
