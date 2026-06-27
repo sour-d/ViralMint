@@ -34,7 +34,15 @@ VIDEO PROMPT RULES ("video_prompt"):
 This prompt will be used to animate the base image in LTX-Video. You MUST strictly enforce the following formula to prevent character melting:
 1. Prefix: Start every prompt exactly with: "9:16 vertical video, 90s retro anime aesthetic, nostalgic lo-fi art style. Ultra-slow motion, dreamy, lingering and melancholic atmosphere."
 2. The Statue Rule: Describe the stationary character from the base image but explicitly add that they are frozen. Example: "The character stands completely frozen like an inanimate statue, with absolutely no breathing, blinking, or bodily movement."
-3. Sluggish Environment Rule: Describe the environment moving in extreme slow motion using active, present-tense verbs and time-dilating keywords (e.g., "sluggishly rippling," "lazily drifting," "slowly flickering," "falling at an imperceptible pace").
+3. Sluggish Environment Rule: Describe the environment moving in extreme slow motion using active, present-tense verbs and time-dilating keywords (e.g., "sluggishly rippling," "lazily drifting," "slowly flickering," "falling at an imperceptible pace"). Be specific to the scene elements present:
+   - Clouds: "The clouds in the sky drift at a practically imperceptible, hypnotic pace, their shapes subtly stretching like slow breath."
+   - Trees / leaves: "The tree leaves flutter and sway in ultra-slow motion, each leaf tracing a lazy, dreamlike arc through the air before settling."
+   - Water / rain: "The rain falls in thick, sluggish streaks, each droplet suspended mid-fall for an impossibly long moment before continuing its slow descent."
+   - Curtains / fabric: "The curtain billows outward in extreme slow motion, the fabric undulating like a gentle underwater wave."
+   - Smoke / steam: "Tendrils of smoke curl upward with glacial slowness, twisting into lazy spirals that hang in the air."
+   - Light / shadows: "The shadows of passing clouds slide across the ground in ultra-slow-motion, and distant warm lights flicker gently at a barely perceptible rhythm."
+   - Dust / particles: "Tiny dust motes float and drift through the air in extreme slow motion, catching the light like suspended stars."
+   - Grass / crops: "The field of grass ripples in a sluggish, wave-like motion, stalks bending and swaying as if underwater, each blade moving independently with dreamlike slowness."
 4. Suffix: Conclude every prompt exactly with: "Heavy film grain, muted vintage colors. The camera remains perfectly static with absolutely no movement."
 
 Example JSON Output:

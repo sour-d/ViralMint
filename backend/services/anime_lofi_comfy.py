@@ -191,10 +191,9 @@ async def _trim_video(input_path: Path, target_duration: float) -> Path:
 async def generate_segment_video(
     image_path: str,
     video_prompt: str,
-    duration_sec: float,
     user_settings=None,
 ) -> dict:
-    """Upload image, run LTX img2vid (always 5s), then trim to *duration_sec*.
+    """Upload image, run LTX img2vid — always produces a 5s clip.
 
     Returns local file info with *url*, *filename*, *path*.
     """
@@ -222,11 +221,6 @@ async def generate_segment_video(
     vid_path = VIDEOS_DIR / vid_filename
     vid_path.parent.mkdir(parents=True, exist_ok=True)
     await download_comfy_output(base_url, result["item"], vid_path)
-
-    # 4. Trim to actual target duration
-    target = max(duration_sec, 1.0)
-    if target < LTX_WORKFLOW_DURATION:
-        vid_path = await _trim_video(vid_path, target)
 
     if app_settings.RUNPOD_FREE_MEMORY_AFTER_GENERATE:
         await free_comfy_memory(base_url)
@@ -259,7 +253,7 @@ async def generate_all_segment_videos(
         prompt = video_prompts[i] if i < len(video_prompts) else ""
         dur = durations[i] if i < len(durations) else 3.0
         try:
-            vid_info = await generate_segment_video(img["path"], prompt, dur, user_settings)
+            vid_info = await generate_segment_video(img["path"], prompt, user_settings)
         except Exception as e:
             logger.error("Video gen failed for segment %s: %s", img.get("scene_number"), e)
             vid_info = {
