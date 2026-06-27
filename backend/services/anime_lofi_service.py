@@ -1,4 +1,5 @@
 """Anime Lo-fi — Script → Audio → Image-per-segment → Raw Video."""
+import asyncio
 import importlib.util
 import json
 import logging
@@ -378,7 +379,7 @@ async def _overlay_subtitles(videos: list[dict]) -> list[dict]:
         return videos
 
     SUBTITLE_DIR.mkdir(parents=True, exist_ok=True)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     result = []
 
     for i, vid in enumerate(videos):
@@ -668,7 +669,6 @@ async def render_raw_video(
 
 
 async def asyncio_run_subprocess(cmd: list[str]):
-    import asyncio
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,

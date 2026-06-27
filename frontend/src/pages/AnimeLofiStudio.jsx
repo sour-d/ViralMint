@@ -43,6 +43,8 @@ export default function AnimeLofiStudio() {
   const retryImagePollsRef = useRef({})
 
   const [finalVideo, setFinalVideo] = useState(null)
+const [renderLoading, setRenderLoading] = useState(false)
+const [renderError, setRenderError] = useState(null)
 
   const stopPolling = (ref) => {
     if (ref.current) { clearInterval(ref.current); ref.current = null }
@@ -291,15 +293,15 @@ export default function AnimeLofiStudio() {
 
   const handleRenderFinal = async () => {
     if (!videos.length || !audioInfo) return
-    setLoading(true); setError(null)
+    setRenderLoading(true); setRenderError(null); setError(null)
     try {
       const res = await http.post("/api/anime-lofi/render-video-compilation", {
         videos,
         audio_filename: audioInfo.filename,
       })
       setFinalVideo(res.data)
-    } catch (e) { setError(e.response?.data?.detail || "Render failed") }
-    finally { setLoading(false) }
+    } catch (e) { setRenderError(e.response?.data?.detail || "Render failed") }
+    finally { setRenderLoading(false) }
   }
 
   // ── Render ────────────────────────────────────────────────────
@@ -586,17 +588,32 @@ export default function AnimeLofiStudio() {
                   Stitch the segment videos with the audio track into the final lo-fi anime short.
                 </Typography>
                 <Stack direction="row" spacing={2} alignItems="center">
-                  <Button variant="contained" onClick={handleRenderFinal} disabled={loading || !!finalVideo}
-                    startIcon={loading ? <CircularProgress size={18} /> : <VideocamIcon />}
+                  <Button variant="contained" onClick={handleRenderFinal} disabled={renderLoading}
+                    startIcon={renderLoading ? <CircularProgress size={18} /> : <VideocamIcon />}
                     sx={{ borderRadius: 2, fontWeight: 700, textTransform: "none" }}>
-                    {loading ? "Rendering..." : "Render Final Video"}
+                    {renderLoading ? "Rendering..." : finalVideo ? "Re-render" : "Render Final Video"}
                   </Button>
                 </Stack>
+                {renderError && (
+                  <Stack direction="row" spacing={1.5} alignItems="center">
+                    <Alert severity="error" onClose={() => setRenderError(null)} sx={{ flex: 1 }}>{renderError}</Alert>
+                    <Button variant="outlined" onClick={handleRenderFinal} disabled={renderLoading}
+                      startIcon={<ReplayIcon />}
+                      sx={{ borderRadius: 2, fontWeight: 700, textTransform: "none", whiteSpace: "nowrap" }}>
+                      Retry
+                    </Button>
+                  </Stack>
+                )}
                 {finalVideo && (
                   <Stack spacing={2}>
                     <Chip icon={<CheckCircleIcon />} label="Final video ready!" color="success" sx={{ width: "fit-content" }} />
                     <video controls src={finalVideo.url} style={{ width: "100%", maxWidth: 400, borderRadius: 8 }} />
                     <Stack direction="row" spacing={1.5}>
+                      <Button variant="outlined" onClick={handleRenderFinal} disabled={renderLoading}
+                        startIcon={<ReplayIcon />}
+                        sx={{ borderRadius: 2, fontWeight: 700, textTransform: "none" }}>
+                        Re-render
+                      </Button>
                       <Button variant="contained" onClick={() => {
                         setUserIdea(""); setFullScript(""); setSegments([])
                         setAudioInfo(null); setImages([]); setVideos([])

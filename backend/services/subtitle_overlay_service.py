@@ -1,8 +1,34 @@
 """Subtitle overlay via moviepy TextClip — 9:16 vertical video (1080×1920)."""
 from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
 from moviepy.editor import TextClip, CompositeVideoClip
 
 _FONT_PATH = str(Path(__file__).resolve().parent.parent.parent / "font" / "PlayfairDisplay-VariableFont_wght.ttf")
+
+
+def _wrap_text(text: str, font_path: str, font_size: int, max_width: int) -> str:
+    """Word-wrap *text* so each line fits within *max_width* pixels."""
+    font = ImageFont.truetype(font_path, font_size)
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+
+    words = text.split()
+    lines = []
+    current = ""
+
+    for w in words:
+        test = f"{current} {w}".strip()
+        bbox = draw.textbbox((0, 0), test, font=font)
+        if bbox[2] - bbox[0] <= max_width:
+            current = test
+        else:
+            if current:
+                lines.append(current)
+            current = w
+
+    if current:
+        lines.append(current)
+
+    return "\n".join(lines)
 
 
 def add_subtitle(
@@ -20,6 +46,8 @@ def add_subtitle(
     fade_duration: float = 0.3,
 ):
     """Overlay a subtitle on *video_clip* from *start_time* to *end_time*.
+
+    Uses PIL-based ``method="label"`` (no ImageMagick required).
 
     Parameters
     ----------
@@ -49,18 +77,18 @@ def add_subtitle(
     CompositeVideoClip
         The composited clip with the subtitle layer.
     """
+    wrapped = _wrap_text(text, font_path, font_size, text_width)
     duration = end_time - start_time
 
     txt_clip = (
         TextClip(
-            text,
+            wrapped,
             fontsize=font_size,
             font=font_path,
             color=color,
             stroke_color=stroke_color,
             stroke_width=stroke_width,
-            method="caption",
-            size=(text_width, None),
+            method="label",
             align="center",
         )
         .set_start(start_time)
