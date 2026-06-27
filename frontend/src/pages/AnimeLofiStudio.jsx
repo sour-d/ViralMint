@@ -12,6 +12,8 @@ import ImageIcon from "@mui/icons-material/Image"
 import VideocamIcon from "@mui/icons-material/Videocam"
 import ReplayIcon from "@mui/icons-material/Replay"
 
+const STORAGE_KEY = "anime_lofi_studio"
+
 const STEPS = [
   { label: "Write Script", icon: <AutoAwesomeIcon /> },
   { label: "Generate Audio", icon: <MusicNoteIcon /> },
@@ -20,31 +22,49 @@ const STEPS = [
   { label: "Render Final", icon: <VideocamIcon /> },
 ]
 
+function loadSavedState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch { return null }
+}
+
+function saveState(state) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)) } catch { /* ignore quota errors */ }
+}
+
+function clearSavedState() {
+  try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
+}
+
 export default function AnimeLofiStudio() {
-  const [activeStep, setActiveStep] = useState(0)
+  const saved = loadSavedState()
+
+  const [activeStep, setActiveStep] = useState(saved?.activeStep ?? 0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const [userIdea, setUserIdea] = useState("")
-  const [segments, setSegments] = useState([])       // LLM segments (with voiceover, scene_description, final_comfyui_prompt, video_prompt)
-  const [fullScript, setFullScript] = useState("")
+  const [userIdea, setUserIdea] = useState(saved?.userIdea ?? "")
+  const [segments, setSegments] = useState(saved?.segments ?? [])
+  const [fullScript, setFullScript] = useState(saved?.fullScript ?? "")
 
-  const [audioInfo, setAudioInfo] = useState(null)
+  const [audioInfo, setAudioInfo] = useState(saved?.audioInfo ?? null)
 
-  const [images, setImages] = useState([])
+  const [images, setImages] = useState(saved?.images ?? [])
   const [imageProgress, setImageProgress] = useState(null)
   const pollRef = useRef(null)
 
-  const [videos, setVideos] = useState([])
+  const [videos, setVideos] = useState(saved?.videos ?? [])
   const [videoProgress, setVideoProgress] = useState(null)
   const videoPollRef = useRef(null)
   // Track multiple retry polls: { [index]: { job_id, interval } }
   const retryPollsRef = useRef({})
   const retryImagePollsRef = useRef({})
 
-  const [finalVideo, setFinalVideo] = useState(null)
-const [renderLoading, setRenderLoading] = useState(false)
-const [renderError, setRenderError] = useState(null)
+  const [finalVideo, setFinalVideo] = useState(saved?.finalVideo ?? null)
+  const [renderLoading, setRenderLoading] = useState(false)
+  const [renderError, setRenderError] = useState(null)
 
   const stopPolling = (ref) => {
     if (ref.current) { clearInterval(ref.current); ref.current = null }
@@ -60,6 +80,11 @@ const [renderError, setRenderError] = useState(null)
     Object.values(retryImagePollsRef.current).forEach(({ interval }) => clearInterval(interval))
     retryImagePollsRef.current = {}
   }
+
+  // Persist state on every relevant change
+  useEffect(() => {
+    saveState({ activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo })
+  }, [activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo])
 
   useEffect(() => {
     return () => { stopPolling(pollRef); stopPolling(videoPollRef); stopRetryPolls(); stopRetryImagePolls() }
@@ -615,6 +640,7 @@ const [renderError, setRenderError] = useState(null)
                         Re-render
                       </Button>
                       <Button variant="contained" onClick={() => {
+                        clearSavedState()
                         setUserIdea(""); setFullScript(""); setSegments([])
                         setAudioInfo(null); setImages([]); setVideos([])
                         setFinalVideo(null); setActiveStep(0)
