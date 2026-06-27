@@ -216,10 +216,10 @@ function WorkflowCard({ workflow, title, icon, loading, setupType, onRefresh }) 
 export default function ComfyUISetup() {
   const [ltx, setLtx] = useState(null)
   const [ltxImg2vid, setLtxImg2vid] = useState(null)
-  const [niche2, setNiche2] = useState(null)
+  const [animeLofi, setAnimeLofi] = useState(null)
   const [loadingLtx, setLoadingLtx] = useState(true)
   const [loadingLtxImg2vid, setLoadingLtxImg2vid] = useState(true)
-  const [loadingNiche2, setLoadingNiche2] = useState(true)
+  const [loadingAnimeLofi, setLoadingAnimeLofi] = useState(true)
 
   const fetchLtx = useCallback(async () => {
     try {
@@ -237,20 +237,20 @@ export default function ComfyUISetup() {
       setLoadingLtxImg2vid(false)
     }
   }, [])
-  const fetchNiche2 = useCallback(async () => {
+  const fetchAnimeLofi = useCallback(async () => {
     try {
       const { data } = await http.get("/api/runpod/workflow?type=z-turbo")
-      setNiche2(data)
+      setAnimeLofi(data)
     } finally {
-      setLoadingNiche2(false)
+      setLoadingAnimeLofi(false)
     }
   }, [])
 
   useEffect(() => {
     fetchLtx()
     fetchLtxImg2vid()
-    fetchNiche2()
-  }, [fetchLtx, fetchLtxImg2vid, fetchNiche2])
+    fetchAnimeLofi()
+  }, [fetchLtx, fetchLtxImg2vid, fetchAnimeLofi])
 
   return (
     <Box sx={{ height: "100%", overflow: "auto", p: { xs: 2, md: 3 } }}>
@@ -299,12 +299,12 @@ export default function ComfyUISetup() {
           </Grid>
           <Grid item xs={12} md={4}>
             <WorkflowCard
-              workflow={niche2}
+              workflow={animeLofi}
               title="Z-turbo Image"
               icon={<ImageIcon sx={{ color: "primary.main", fontSize: 24 }} />}
-              loading={loadingNiche2}
+              loading={loadingAnimeLofi}
               setupType="z-turbo"
-              onRefresh={fetchNiche2}
+              onRefresh={fetchAnimeLofi}
             />
           </Grid>
         </Grid>

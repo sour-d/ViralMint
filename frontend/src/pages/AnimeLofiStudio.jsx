@@ -20,7 +20,7 @@ const STEPS = [
   { label: "Render Final", icon: <VideocamIcon /> },
 ]
 
-export default function Niche2Studio() {
+export default function AnimeLofiStudio() {
   const [activeStep, setActiveStep] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -69,7 +69,7 @@ export default function Niche2Studio() {
     if (!userIdea.trim()) return
     setLoading(true); setError(null)
     try {
-      const res = await http.post("/api/niche2/generate-script", { user_idea: userIdea })
+      const res = await http.post("/api/anime-lofi/generate-script", { user_idea: userIdea })
       setSegments(res.data.segments || [])
       setFullScript(res.data.full_script || "")
     } catch (e) { setError(e.response?.data?.detail || "Script gen failed") }
@@ -82,7 +82,7 @@ export default function Niche2Studio() {
     if (!fullScript) return
     setLoading(true); setError(null)
     try {
-      const res = await http.post("/api/niche2/generate-audio", { script: fullScript })
+      const res = await http.post("/api/anime-lofi/generate-audio", { script: fullScript })
       setAudioInfo(res.data)
     } catch (e) { setError(e.response?.data?.detail || "Audio gen failed") }
     finally { setLoading(false) }
@@ -98,7 +98,7 @@ export default function Niche2Studio() {
 
     try {
       // 1. Transcribe & align to get per-segment durations
-      const transRes = await http.post("/api/niche2/transcribe-and-align", {
+      const transRes = await http.post("/api/anime-lofi/transcribe-and-align", {
         audio_filename: audioInfo.filename,
         script: fullScript,
         segments,
@@ -107,7 +107,7 @@ export default function Niche2Studio() {
       setSegments(alignedSegments)
 
       // 2. Start async image generation
-      const imgRes = await http.post("/api/niche2/generate-images-async", { segments: alignedSegments })
+      const imgRes = await http.post("/api/anime-lofi/generate-images-async", { segments: alignedSegments })
       const jobId = imgRes.data.job_id
       if (!jobId) throw new Error("No job_id returned")
 
@@ -115,7 +115,7 @@ export default function Niche2Studio() {
       await new Promise((resolve, reject) => {
         pollRef.current = setInterval(async () => {
           try {
-            const { data } = await http.get(`/api/niche2/generate-images-status/${jobId}`)
+            const { data } = await http.get(`/api/anime-lofi/generate-images-status/${jobId}`)
             if (data.status === "success") {
               stopPolling(pollRef)
               setImages(data.images || [])
@@ -150,14 +150,14 @@ export default function Niche2Studio() {
     stopPolling(videoPollRef)
 
     try {
-      const res = await http.post("/api/niche2/generate-videos-async", { images, segments })
+      const res = await http.post("/api/anime-lofi/generate-videos-async", { images, segments })
       const jobId = res.data.job_id
       if (!jobId) throw new Error("No job_id returned")
 
       await new Promise((resolve, reject) => {
         videoPollRef.current = setInterval(async () => {
           try {
-            const { data } = await http.get(`/api/niche2/generate-videos-status/${jobId}`)
+            const { data } = await http.get(`/api/anime-lofi/generate-videos-status/${jobId}`)
             if (data.status === "success") {
               stopPolling(videoPollRef)
               setVideos(data.videos || [])
@@ -188,7 +188,7 @@ export default function Niche2Studio() {
     setError(null)
 
     try {
-      const res = await http.post("/api/niche2/retry-video", {
+      const res = await http.post("/api/anime-lofi/retry-video", {
         image: images[index],
         segment: segments[index],
       })
@@ -205,7 +205,7 @@ export default function Niche2Studio() {
       // Start polling this retry job
       const interval = setInterval(async () => {
         try {
-          const { data } = await http.get(`/api/niche2/generate-videos-status/${jobId}`)
+          const { data } = await http.get(`/api/anime-lofi/generate-videos-status/${jobId}`)
           if (data.status === "success") {
             clearInterval(interval)
             delete retryPollsRef.current[index]
@@ -241,7 +241,7 @@ export default function Niche2Studio() {
     setError(null)
 
     try {
-      const res = await http.post("/api/niche2/retry-image", {
+      const res = await http.post("/api/anime-lofi/retry-image", {
         segment: segments[index],
       })
       const jobId = res.data.job_id
@@ -256,7 +256,7 @@ export default function Niche2Studio() {
 
       const interval = setInterval(async () => {
         try {
-          const { data } = await http.get(`/api/niche2/generate-images-status/${jobId}`)
+          const { data } = await http.get(`/api/anime-lofi/generate-images-status/${jobId}`)
           if (data.status === "success") {
             clearInterval(interval)
             delete retryImagePollsRef.current[index]
@@ -293,7 +293,7 @@ export default function Niche2Studio() {
     if (!videos.length || !audioInfo) return
     setLoading(true); setError(null)
     try {
-      const res = await http.post("/api/niche2/render-video-compilation", {
+      const res = await http.post("/api/anime-lofi/render-video-compilation", {
         videos,
         audio_filename: audioInfo.filename,
       })

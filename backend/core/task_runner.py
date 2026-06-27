@@ -1143,15 +1143,15 @@ async def run_install_runpod_models(
         await ws_manager.send({"type": "job_failed", "job_id": job_id, "error": str(e)}, user_id)
 
 
-async def run_niche2_generate_videos(
+async def run_anime_lofi_generate_videos(
     job_id: str,
     user_id: str = "local",
 ):
-    """Generate one LTX img2vid per Niche 2 segment in the background."""
+    """Generate one LTX img2vid per anime-lofi segment in the background."""
     import json as _json
     from backend.agents.job_helper import update_job_status
     from backend.core.ws_manager import ws_manager
-    from backend.services.niche2_service import generate_segment_videos
+    from backend.services.anime_lofi_service import generate_segment_videos
     from backend.models.user_settings import UserSettings
     from backend.database import AsyncSessionLocal
     from backend.models.job import Job
@@ -1177,7 +1177,7 @@ async def run_niche2_generate_videos(
         await ws_manager.send({
             "type": "job_started",
             "job_id": job_id,
-            "job_type": "niche2_generate_videos",
+            "job_type": "anime_lofi_generate_videos",
             "message": f"Generating {len(images)} segment videos…",
         }, user_id)
 
@@ -1210,15 +1210,15 @@ async def run_niche2_generate_videos(
         await ws_manager.send({"type": "job_failed", "job_id": job_id, "error": err}, user_id)
 
 
-async def run_niche2_generate_images(
+async def run_anime_lofi_generate_images(
     job_id: str,
     user_id: str = "local",
 ):
-    """Generate one Z-turbo image per Niche 2 segment in the background."""
+    """Generate one Z-turbo image per anime-lofi segment in the background."""
     import json as _json
     from backend.agents.job_helper import update_job_status
     from backend.core.ws_manager import ws_manager
-    from backend.services.niche2_service import generate_segment_images
+    from backend.services.anime_lofi_service import generate_segment_images
     from backend.models.user_settings import UserSettings
     from backend.database import AsyncSessionLocal
     from backend.models.job import Job
@@ -1244,7 +1244,7 @@ async def run_niche2_generate_images(
         await ws_manager.send({
             "type": "job_started",
             "job_id": job_id,
-            "job_type": "niche2_generate_images",
+            "job_type": "anime_lofi_generate_images",
             "message": f"Generating {len(segments)} images…",
         }, user_id)
 

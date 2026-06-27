@@ -89,27 +89,27 @@ async def runpod_workflow(type: str = "ltx"):
         return [{"id": p.get("id"), "title": p.get("title", p.get("id"))} for p in packs if p.get("id")]
 
     if type == "z-turbo":
-        niche2_mapping = WORKFLOWS_DIR / "runpod_mapping_niche2.json"
-        if not niche2_mapping.exists():
+        anime_lofi_mapping = WORKFLOWS_DIR / "runpod_mapping_anime_lofi.json"
+        if not anime_lofi_mapping.exists():
             return {
                 "kind": "z-turbo",
-                "workflow_file": "niche2_txt2img.json",
-                "mapping_file": "runpod_mapping_niche2.json",
+                "workflow_file": "anime_lofi_txt2img.json",
+                "mapping_file": "runpod_mapping_anime_lofi.json",
                 "audio_required": False,
                 "required_models": [],
                 "required_node_packs": [],
                 "configured": False,
                 "download_urls": {
-                    "workflow": "/api/runpod/workflow/download?kind=niche2_txt2img",
-                    "mapping": "/api/runpod/workflow/download?kind=niche2_mapping",
+                    "workflow": "/api/runpod/workflow/download?kind=anime_lofi_txt2img",
+                    "mapping": "/api/runpod/workflow/download?kind=anime_lofi_mapping",
                 },
             }
-        with open(niche2_mapping, encoding="utf-8") as f:
+        with open(anime_lofi_mapping, encoding="utf-8") as f:
             mapping = json.load(f)
         return {
             "kind": "z-turbo",
-            "workflow_file": mapping.get("txt2img", {}).get("workflow_file", "niche2_txt2img.json"),
-            "mapping_file": "runpod_mapping_niche2.json",
+            "workflow_file": mapping.get("txt2img", {}).get("workflow_file", "anime_lofi_txt2img.json"),
+            "mapping_file": "runpod_mapping_anime_lofi.json",
             "audio_required": False,
             "required_models": mapping.get("required_models", []),
             "required_node_packs": mapping.get("required_node_packs", []),
@@ -118,27 +118,27 @@ async def runpod_workflow(type: str = "ltx"):
                 for k in ("prompt_node_id", "seed_node_id", "save_image_node_id")
             ),
             "download_urls": {
-                "workflow": "/api/runpod/workflow/download?kind=niche2_txt2img",
-                "mapping": "/api/runpod/workflow/download?kind=niche2_mapping",
+                "workflow": "/api/runpod/workflow/download?kind=anime_lofi_txt2img",
+                "mapping": "/api/runpod/workflow/download?kind=anime_lofi_mapping",
             },
         }
 
     # LTX image→video workflow
     if type == "ltx-img2vid":
-        wf_file = "niche2_img2vid.json"
+        wf_file = "anime_lofi_img2vid.json"
         wf_path = WORKFLOWS_DIR / wf_file
         wf_ok = wf_path.exists()
         return {
             "kind": "ltx-img2vid",
             "workflow_file": wf_file if wf_ok else None,
-            "mapping_file": "runpod_mapping_niche2.json",
+            "mapping_file": "runpod_mapping_anime_lofi.json",
             "audio_required": False,
             "configured": wf_ok,
             "required_models": _manifest_models("ltx-img2vid"),
             "required_node_packs": _manifest_node_packs(),
             "download_urls": {
-                "workflow": f"/api/runpod/workflow/download?kind=niche2_img2vid" if wf_ok else None,
-                "mapping": "/api/runpod/workflow/download?kind=niche2_mapping",
+                "workflow": f"/api/runpod/workflow/download?kind=anime_lofi_img2vid" if wf_ok else None,
+                "mapping": "/api/runpod/workflow/download?kind=anime_lofi_mapping",
             },
         }
 
@@ -169,14 +169,14 @@ async def runpod_workflow(type: str = "ltx"):
 @router.get("/workflow/download")
 async def runpod_workflow_download(kind: str = "api"):
     """Download a workflow, UI export, or mapping file."""
-    NICHE2_FILES = {
-        "niche2_txt2img": "niche2_txt2img.json",
-        "niche2_img2vid": "niche2_img2vid.json",
-        "niche2_mapping": "runpod_mapping_niche2.json",
+    ANIME_LOFI_FILES = {
+        "anime_lofi_txt2img": "anime_lofi_txt2img.json",
+        "anime_lofi_img2vid": "anime_lofi_img2vid.json",
+        "anime_lofi_mapping": "runpod_mapping_anime_lofi.json",
     }
-    filename = WORKFLOW_FILES.get(kind) or NICHE2_FILES.get(kind)
+    filename = WORKFLOW_FILES.get(kind) or ANIME_LOFI_FILES.get(kind)
     if not filename:
-        raise HTTPException(400, detail="Invalid kind. Options: api, ui, mapping, niche2_txt2img, niche2_img2vid, niche2_mapping")
+        raise HTTPException(400, detail="Invalid kind. Options: api, ui, mapping, anime_lofi_txt2img, anime_lofi_img2vid, anime_lofi_mapping")
 
     path = WORKFLOWS_DIR / filename
     if not path.is_file():

@@ -1,4 +1,4 @@
-"""Niche 2 — Z-turbo txt2img + LTX img2vid via ComfyUI on RunPod."""
+"""Anime Lo-fi — Z-turbo txt2img + LTX img2vid via ComfyUI on RunPod."""
 import asyncio
 import copy
 import json
@@ -25,8 +25,8 @@ from backend.core.api_keys import get_runpod_api_key, get_runpod_pod_id
 logger = logging.getLogger(__name__)
 
 WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
-MAPPING_FILE = WORKFLOWS_DIR / "runpod_mapping_niche2.json"
-STORAGE = Path("storage/niche2")
+MAPPING_FILE = WORKFLOWS_DIR / "runpod_mapping_anime_lofi.json"
+STORAGE = Path("storage/anime_lofi")
 SEGMENTS_DIR = STORAGE / "segments"
 VIDEOS_DIR = STORAGE / "videos"
 
@@ -93,7 +93,7 @@ async def generate_segment_image(prompt_text: str, user_settings=None) -> dict:
     if app_settings.RUNPOD_FREE_MEMORY_AFTER_GENERATE:
         await free_comfy_memory(base_url)
 
-    return {"filename": img_filename, "path": str(img_path), "url": f"/api/niche2/media/{quote(img_filename)}"}
+    return {"filename": img_filename, "path": str(img_path), "url": f"/api/anime-lofi/media/{quote(img_filename)}"}
 
 
 async def generate_all_segment_images(segments: list[dict], user_settings=None, on_progress=None) -> list[dict]:
@@ -234,7 +234,7 @@ async def generate_segment_video(
     return {
         "filename": vid_path.name,
         "path": str(vid_path),
-        "url": f"/api/niche2/media/{quote(vid_path.name)}",
+        "url": f"/api/anime-lofi/media/{quote(vid_path.name)}",
     }
 
 
@@ -293,9 +293,9 @@ def _estimate_duration(text: str, words_per_sec: float = 3.0) -> float:
 
 
 def _fallback_dummy(seg: dict, index: int, total: int) -> dict:
-    from backend.services.niche2_service import _create_dummy_image
+    from backend.services.anime_lofi_service import _create_dummy_image
     img_filename = f"zseg_fallback_{uuid.uuid4().hex[:8]}.png"
     img_path = SEGMENTS_DIR / img_filename
     img_path.parent.mkdir(parents=True, exist_ok=True)
     _create_dummy_image(img_path, seg.get("voiceover", "")[:80], index, total)
-    return {"filename": img_filename, "path": str(img_path), "url": f"/api/niche2/media/{quote(img_filename)}"}
+    return {"filename": img_filename, "path": str(img_path), "url": f"/api/anime-lofi/media/{quote(img_filename)}"}

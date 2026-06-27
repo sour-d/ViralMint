@@ -1,5 +1,5 @@
 {
-  "description": "Models for LTX video (video_ltx2_3_ia2v-api.json) and Z-turbo txt2img (niche2_txt2img.json). Each model has a workflows list so setup can filter by workflow type.",
+  "description": "Models for LTX video (video_ltx2_3_ia2v-api.json) and Z-turbo txt2img (anime_lofi_txt2img.json). Each model has a workflows list so setup can filter by workflow type.",
   "models": [
     {
       "folder": "checkpoints",

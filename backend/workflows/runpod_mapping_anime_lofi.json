@@ -1,6 +1,6 @@
 {
   "txt2img": {
-    "workflow_file": "niche2_txt2img.json",
+    "workflow_file": "anime_lofi_txt2img.json",
     "prompt_node_id": "104:90",
     "prompt_input_key": "text",
     "seed_node_id": "104:92",
@@ -9,7 +9,7 @@
     "save_image_input_prefix_key": "filename_prefix"
   },
   "img2vid": {
-    "workflow_file": "niche2_img2vid.json",
+    "workflow_file": "anime_lofi_img2vid.json",
     "load_image_node_id": "269",
     "load_image_input_key": "image",
     "prompt_node_id": "320:319",

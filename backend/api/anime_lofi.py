@@ -1,4 +1,4 @@
-"""Niche 2 — Script → Audio → Image-per-segment → Raw Video API."""
+"""Anime Lo-fi — Script → Audio → Image-per-segment → Raw Video API."""
 import logging
 from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException
@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 
 from backend.database import AsyncSessionLocal
 from backend.models.user_settings import UserSettings
-from backend.services.niche2_service import (
+from backend.services.anime_lofi_service import (
     generate_script, generate_audio, transcribe_audio, transcribe_and_segment,
     align_segment_durations, generate_segment_images, generate_segment_videos,
     render_raw_video, render_compilation_video,
@@ -15,7 +15,7 @@ from backend.services.niche2_service import (
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/niche2", tags=["niche2"])
+router = APIRouter(prefix="/anime-lofi", tags=["anime-lofi"])
 
 
 async def _get_user_settings():
@@ -123,7 +123,7 @@ async def api_generate_images(body: dict = Body(...)):
 async def api_generate_images_async(body: dict = Body(...)):
     """Start background image generation for segments, returns immediately with a job_id."""
     from backend.agents.job_helper import create_job
-    from backend.core.task_runner import run_niche2_generate_images, dispatch
+    from backend.core.task_runner import run_anime_lofi_generate_images, dispatch
 
     segments = body.get("segments", [])
     style_prompt = body.get("style_prompt", "")
@@ -131,8 +131,8 @@ async def api_generate_images_async(body: dict = Body(...)):
         raise HTTPException(400, detail="segments is required")
 
     payload = {"segments": segments, "style_prompt": style_prompt}
-    job = await create_job("niche2_generate_images", "local", payload)
-    dispatch(run_niche2_generate_images(job_id=job.id, user_id="local"))
+    job = await create_job("anime_lofi_generate_images", "local", payload)
+    dispatch(run_anime_lofi_generate_images(job_id=job.id, user_id="local"))
 
     return {
         "ok": True,
@@ -177,7 +177,7 @@ async def api_generate_images_status(job_id: str):
 async def api_generate_videos_async(body: dict = Body(...)):
     """Start background LTX video generation for segments, returns immediately."""
     from backend.agents.job_helper import create_job
-    from backend.core.task_runner import run_niche2_generate_videos, dispatch
+    from backend.core.task_runner import run_anime_lofi_generate_videos, dispatch
 
     images = body.get("images", [])
     segments = body.get("segments", [])
@@ -185,8 +185,8 @@ async def api_generate_videos_async(body: dict = Body(...)):
         raise HTTPException(400, detail="images and segments required")
 
     payload = {"images": images, "segments": segments}
-    job = await create_job("niche2_generate_videos", "local", payload)
-    dispatch(run_niche2_generate_videos(job_id=job.id, user_id="local"))
+    job = await create_job("anime_lofi_generate_videos", "local", payload)
+    dispatch(run_anime_lofi_generate_videos(job_id=job.id, user_id="local"))
 
     return {
         "ok": True,
@@ -254,7 +254,7 @@ async def api_render_video(body: dict = Body(...)):
 async def api_retry_video(body: dict = Body(...)):
     """Regenerate a single segment video (runs as async job for timeout safety)."""
     from backend.agents.job_helper import create_job
-    from backend.core.task_runner import run_niche2_generate_videos, dispatch
+    from backend.core.task_runner import run_anime_lofi_generate_videos, dispatch
 
     image = body.get("image")
     segment = body.get("segment")
@@ -262,8 +262,8 @@ async def api_retry_video(body: dict = Body(...)):
         raise HTTPException(400, detail="image and segment required")
 
     payload = {"images": [image], "segments": [segment]}
-    job = await create_job("niche2_generate_videos", "local", payload)
-    dispatch(run_niche2_generate_videos(job_id=job.id, user_id="local"))
+    job = await create_job("anime_lofi_generate_videos", "local", payload)
+    dispatch(run_anime_lofi_generate_videos(job_id=job.id, user_id="local"))
 
     return {"ok": True, "job_id": job.id}
 
@@ -272,15 +272,15 @@ async def api_retry_video(body: dict = Body(...)):
 async def api_retry_image(body: dict = Body(...)):
     """Regenerate a single segment image (runs as async job)."""
     from backend.agents.job_helper import create_job
-    from backend.core.task_runner import run_niche2_generate_images, dispatch
+    from backend.core.task_runner import run_anime_lofi_generate_images, dispatch
 
     segment = body.get("segment")
     if not segment:
         raise HTTPException(400, detail="segment required")
 
     payload = {"segments": [segment], "style_prompt": ""}
-    job = await create_job("niche2_generate_images", "local", payload)
-    dispatch(run_niche2_generate_images(job_id=job.id, user_id="local"))
+    job = await create_job("anime_lofi_generate_images", "local", payload)
+    dispatch(run_anime_lofi_generate_images(job_id=job.id, user_id="local"))
 
     return {"ok": True, "job_id": job.id}
 
@@ -309,7 +309,7 @@ async def api_render_video_compilation(body: dict = Body(...)):
 @router.get("/media/{filename:path}")
 async def serve_media(filename: str):
     safe_name = Path(filename).name
-    from backend.services.niche2_service import VIDEOS_DIR
+    from backend.services.anime_lofi_service import VIDEOS_DIR
     for directory in (OUTPUT_DIR, SEGMENTS_DIR, VIDEOS_DIR, AUDIO_DIR):
         path = directory / safe_name
         if path.exists():

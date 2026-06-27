@@ -1,4 +1,4 @@
-"""Niche 2 — Script → Audio → Image-per-segment → Raw Video."""
+"""Anime Lo-fi — Script → Audio → Image-per-segment → Raw Video."""
 import json
 import logging
 import random
@@ -16,7 +16,7 @@ from backend.services.whisper_service import whisper_service
 
 logger = logging.getLogger(__name__)
 
-STORAGE = Path("storage/niche2")
+STORAGE = Path("storage/anime_lofi")
 AUDIO_DIR = STORAGE / "audio"
 SEGMENTS_DIR = STORAGE / "segments"
 VIDEOS_DIR = STORAGE / "videos"
@@ -41,7 +41,7 @@ def _ensure_dirs():
 
 # ── Step 1: Structured Script (LLM segments) ──────────────────────────
 
-import backend.services.niche2_llm as n2llm
+import backend.services.anime_lofi_llm as n2llm
 
 
 async def generate_script(
@@ -86,12 +86,12 @@ async def generate_audio(
         api_key=api_key,
     )
 
-    filename = f"niche2_audio_{uuid.uuid4().hex[:8]}.mp3"
+    filename = f"anime_lofi_audio_{uuid.uuid4().hex[:8]}.mp3"
     final_path = AUDIO_DIR / filename
     import shutil
     shutil.copy2(audio_path, final_path)
 
-    return {"filename": filename, "path": str(final_path), "url": f"/api/niche2/media/{filename}"}
+    return {"filename": filename, "path": str(final_path), "url": f"/api/anime-lofi/media/{filename}"}
 
 
 # ── Step 3: Transcribe + Align to LLM segments ─────────────────────────
@@ -218,7 +218,7 @@ async def generate_segment_images(
 ) -> list[dict]:
     _ensure_dirs()
 
-    from backend.services.niche2_comfy import generate_all_segment_images as _comfy_gen
+    from backend.services.anime_lofi_comfy import generate_all_segment_images as _comfy_gen
 
     try:
         return await _comfy_gen(segments, user_settings, on_progress=on_progress)
@@ -236,7 +236,7 @@ async def generate_segment_images(
                 "scene_number": seg.get("scene_number", i + 1),
                 "filename": img_filename,
                 "path": str(img_path),
-                "url": f"/api/niche2/media/{quote(img_filename)}",
+                "url": f"/api/anime-lofi/media/{quote(img_filename)}",
                 "segment_text": text,
                 "duration": round(max(len(text.split()) / 3.0, 1.5), 2),
                 "final_comfyui_prompt": seg.get("final_comfyui_prompt", ""),
@@ -303,7 +303,7 @@ async def generate_segment_videos(
 ) -> list[dict]:
     """Generate one LTX img2vid per segment using video_prompt + aligned duration."""
     _ensure_dirs()
-    from backend.services.niche2_comfy import generate_all_segment_videos as _comfy_vid_gen
+    from backend.services.anime_lofi_comfy import generate_all_segment_videos as _comfy_vid_gen
 
     video_prompts = [s.get("video_prompt", "") for s in segments]
     durations = [s.get("duration_sec", 3.0) for s in segments]
@@ -352,7 +352,7 @@ async def render_compilation_video(
         raise FileNotFoundError(f"Audio not found: {audio_path}")
 
     concat_file = OUTPUT_DIR / f"concat_vids_{uuid.uuid4().hex[:8]}.txt"
-    output_filename = f"niche2_final_{uuid.uuid4().hex[:8]}.mp4"
+    output_filename = f"anime_lofi_final_{uuid.uuid4().hex[:8]}.mp4"
     output_path = OUTPUT_DIR / output_filename
 
     # Use ffprobe to get actual video durations for concat demuxer
@@ -433,7 +433,7 @@ async def render_compilation_video(
     return {
         "filename": output_filename,
         "path": str(output_path),
-        "url": f"/api/niche2/media/{quote(output_filename)}",
+        "url": f"/api/anime-lofi/media/{quote(output_filename)}",
     }
 
 
@@ -459,7 +459,7 @@ async def render_raw_video(
     total_dur = float(probe.stdout.strip())
 
     concat_file = OUTPUT_DIR / f"concat_{uuid.uuid4().hex[:8]}.txt"
-    output_filename = f"niche2_video_{uuid.uuid4().hex[:8]}.mp4"
+    output_filename = f"anime_lofi_video_{uuid.uuid4().hex[:8]}.mp4"
     output_path = OUTPUT_DIR / output_filename
 
     # Map image filenames by index
@@ -521,7 +521,7 @@ async def render_raw_video(
     return {
         "filename": output_filename,
         "path": str(output_path),
-        "url": f"/api/niche2/media/{quote(output_filename)}",
+        "url": f"/api/anime-lofi/media/{quote(output_filename)}",
     }
 
 

@@ -18,7 +18,7 @@ const ClipStudio = lazy(() => import("./pages/ClipStudio"))
 const AiVideo = lazy(() => import("./pages/AiVideo"))
 const LongFormVideo = lazy(() => import("./pages/LongFormVideo"))
 const Niche1Studio = lazy(() => import("./pages/Niche1Studio"))
-const Niche2Studio = lazy(() => import("./pages/Niche2Studio"))
+const AnimeLofiStudio = lazy(() => import("./pages/AnimeLofiStudio"))
 
 const LazyFallback = () => (
   <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100%", minHeight: 200 }}>
@@ -81,7 +81,7 @@ export default function App() {
               <Route path="cron" element={<Navigate to="/creator" />} />
               <Route path="clips" element={<ClipStudio />} />
               <Route path="niche1" element={<Niche1Studio />} />
-              <Route path="niche2" element={<Niche2Studio />} />
+              <Route path="anime-lofi" element={<AnimeLofiStudio />} />
               <Route path="channels" element={<Channels />} />
               <Route path="messaging" element={<Messaging />} />
               <Route path="settings" element={<Settings />} />

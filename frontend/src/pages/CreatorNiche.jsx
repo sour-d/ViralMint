@@ -18,7 +18,7 @@ export default function CreatorNiche() {
 
   // Dedicated studio pages
   if (slug === "niche1") return <Navigate to="/niche1" replace />
-  if (slug === "niche2") return <Navigate to="/niche2" replace />
+  if (slug === "anime-lofi") return <Navigate to="/anime-lofi" replace />
 
   const angleIdeas = [
     "Strong hook in the first 2 seconds",

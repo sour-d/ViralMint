@@ -192,7 +192,7 @@ async def assess_pod(base_url: str, workflow: str | None = None) -> dict[str, An
 def _check_nodes(registered: set[str], required: Optional[set[str]] = None) -> dict:
     required = required or workflow_class_types(
         "video_ltx2_3_ia2v-api.json",
-        "niche2_txt2img.json",
+        "anime_lofi_txt2img.json",
     )
     missing_types: list[str] = []
     missing_core: list[str] = []
