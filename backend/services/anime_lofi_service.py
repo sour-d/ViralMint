@@ -374,8 +374,8 @@ def _render_subtitle_clip(src_path: str, text: str, out_path: str):
         preset="fast",
         logger=None,
     )
-    clip.close()
     composited.close()
+    clip.close()
 
 
 async def _overlay_subtitles(videos: list[dict]) -> list[dict]:
