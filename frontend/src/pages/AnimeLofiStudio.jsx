@@ -187,13 +187,22 @@ export default function AnimeLofiStudio() {
     finally { setLoading(false) }
   }
 
+  const [editableScript, setEditableScript] = useState("")
+
+  // Sync editableScript from fullScript when it changes (first time or retry)
+  useEffect(() => {
+    if (fullScript && !editableScript) setEditableScript(fullScript)
+  }, [fullScript])
+
   // ── Step 1: Audio ─────────────────────────────────────────────
 
-  const handleGenerateAudio = async () => {
-    if (!fullScript) return
+  const handleGenerateAudio = async (useEdited = false) => {
+    const scriptToSend = useEdited ? editableScript : fullScript
+    if (!scriptToSend) return
     setLoading(true); setError(null)
     try {
-      const res = await http.post("/api/anime-lofi/generate-audio", { script: fullScript })
+      const endpoint = audioInfo ? "/api/anime-lofi/retry-audio" : "/api/anime-lofi/generate-audio"
+      const res = await http.post(endpoint, { script: scriptToSend })
       setAudioInfo(res.data)
     } catch (e) { setError(e.response?.data?.detail || "Audio gen failed") }
     finally { setLoading(false) }
@@ -581,14 +590,24 @@ export default function AnimeLofiStudio() {
               <Stack spacing={2}>
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>2. Generate Audio</Typography>
                 <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                  Convert the full script to speech.
+                  Preview and edit the full script, then generate voiceover.
                 </Typography>
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <Button variant="contained" onClick={handleGenerateAudio} disabled={loading}
+                <TextField label="Full script (editable)"
+                  value={editableScript} onChange={(e) => setEditableScript(e.target.value)}
+                  multiline minRows={4} maxRows={10} />
+                <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
+                  <Button variant="contained" onClick={() => handleGenerateAudio(true)} disabled={loading || !editableScript.trim()}
                     startIcon={loading ? <CircularProgress size={18} /> : <MusicNoteIcon />}
                     sx={{ borderRadius: 2, fontWeight: 700, textTransform: "none" }}>
-                    {loading ? "Generating..." : "Generate Audio"}
+                    {loading ? "Generating..." : audioInfo ? "Regenerate" : "Generate Audio"}
                   </Button>
+                  {audioInfo && (
+                    <Button variant="outlined" onClick={() => handleGenerateAudio(true)} disabled={loading}
+                      startIcon={<ReplayIcon />}
+                      sx={{ borderRadius: 2, fontWeight: 700, textTransform: "none" }}>
+                      Retry
+                    </Button>
+                  )}
                 </Stack>
                 {audioInfo && (
                   <>

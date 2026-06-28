@@ -440,7 +440,7 @@ async def wait_for_comfy_output(
             if resp.is_success and prompt_id in resp.json():
                 entry = resp.json()[prompt_id]
                 for node_out in entry.get("outputs", {}).values():
-                    for kind in ("videos", "gifs", "images"):
+                    for kind in ("audio", "videos", "gifs", "images"):
                         items = node_out.get(kind, [])
                         if items:
                             return {"outputs": entry["outputs"], "item": items[0], "kind": kind}

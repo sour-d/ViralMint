@@ -280,6 +280,75 @@ async def generate_all_segment_videos(
     return results
 
 
+# ── TTS (Chatterbox RT2Voice) ──────────────────────────────────────────
+
+AUDIO_DIR = STORAGE / "audio"
+REFERENCE_AUDIO = WORKFLOWS_DIR / "en-reference-audio.mp3"
+
+
+def build_tts_workflow(text: str, seed: int | None = None) -> dict:
+    """Inject voiceover text and seed into the Chatterbox RT2Voice TTS workflow."""
+    mapping = _load_mapping()
+    cfg = mapping["tts"]
+    workflow = _load_raw_workflow(cfg["workflow_file"])
+
+    prompt_nid = str(cfg["prompt_node_id"])
+    prompt_key = cfg.get("prompt_input_key", "text")
+    if prompt_nid in workflow:
+        workflow[prompt_nid]["inputs"][prompt_key] = text
+
+    seed_nid = str(cfg["seed_node_id"])
+    seed_key = cfg.get("seed_input_key", "seed")
+    if seed_nid in workflow:
+        workflow[seed_nid]["inputs"][seed_key] = seed if seed is not None else random.randint(0, 2**32 - 1)
+
+    return workflow
+
+
+async def generate_audio_on_runpod(text: str, user_settings=None) -> dict:
+    """Generate TTS audio via Chatterbox RT2Voice on the RunPod ComfyUI pod.
+
+    Uploads the reference audio file, builds the workflow, submits it,
+    waits for the result, and downloads the MP3.
+    """
+    api_key = get_runpod_api_key(user_settings)
+    pod_id = get_runpod_pod_id(user_settings)
+    if not api_key or not pod_id:
+        raise RuntimeError("RunPod API key or pod ID not configured")
+
+    status = await get_pod_status(api_key, pod_id)
+    if not status.get("comfy_ready"):
+        raise RuntimeError("ComfyUI is not ready on the pod")
+
+    base_url = get_comfy_base_url(pod_id)
+
+    # 1. Upload reference audio to ComfyUI's input directory
+    if REFERENCE_AUDIO.exists():
+        await upload_to_comfy(base_url, REFERENCE_AUDIO)
+
+    # 2. Build and submit TTS workflow
+    workflow = build_tts_workflow(text)
+    prompt_id = await submit_comfy_workflow(base_url, workflow)
+
+    # 3. Wait for audio output
+    result = await wait_for_comfy_output(base_url, prompt_id)
+
+    # 4. Download the MP3
+    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    audio_filename = f"anime_lofi_audio_{uuid.uuid4().hex[:8]}.mp3"
+    audio_path = AUDIO_DIR / audio_filename
+    await download_comfy_output(base_url, result["item"], audio_path)
+
+    if app_settings.RUNPOD_FREE_MEMORY_AFTER_GENERATE:
+        await free_comfy_memory(base_url)
+
+    return {
+        "filename": audio_filename,
+        "path": str(audio_path),
+        "url": f"/api/anime-lofi/media/{quote(audio_filename)}",
+    }
+
+
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _estimate_duration(text: str, words_per_sec: float = 3.0) -> float:

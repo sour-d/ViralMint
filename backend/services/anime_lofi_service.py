@@ -74,7 +74,16 @@ async def generate_audio(
     voice: str = "en-US-AndrewMultilingualNeural",
     user_settings=None,
 ) -> dict:
+    """Generate TTS audio — tries ComfyUI Chatterbox first, falls back to local TTS."""
     _ensure_dirs()
+    try:
+        from backend.services.anime_lofi_comfy import generate_audio_on_runpod
+        result = await generate_audio_on_runpod(text=script, user_settings=user_settings)
+        logger.info("Audio generated via ComfyUI Chatterbox RT2Voice")
+        return result
+    except Exception as e:
+        logger.warning("ComfyUI TTS failed (%s), falling back to local TTS", e)
+
     api_key = ""
     provider = TTSProvider.EDGE_TTS
     if user_settings:

@@ -96,6 +96,21 @@ async def api_generate_audio(body: dict = Body(...)):
         raise HTTPException(500, detail=str(e))
 
 
+@router.post("/retry-audio")
+async def api_retry_audio(body: dict = Body(...)):
+    """Regenerate audio with (optionally edited) script."""
+    script = body.get("script", "")
+    if not script:
+        raise HTTPException(400, detail="script is required")
+    user_settings = await _get_user_settings()
+    try:
+        result = await generate_audio(script=script, user_settings=user_settings)
+        return {"ok": True, **result}
+    except Exception as e:
+        logger.error(f"Audio retry failed: {e}")
+        raise HTTPException(500, detail=str(e))
+
+
 @router.post("/transcribe")
 async def api_transcribe(body: dict = Body(...)):
     audio_filename = body.get("audio_filename", "")

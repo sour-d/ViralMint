@@ -21,10 +21,26 @@
     "save_video_node_id": "75",
     "save_video_input_prefix_key": "filename_prefix"
   },
+  "tts": {
+    "workflow_file": "chatterbox rt2voice.json",
+    "prompt_node_id": "4",
+    "prompt_input_key": "text",
+    "save_audio_node_id": "5",
+    "save_audio_input_prefix_key": "filename_prefix",
+    "reference_audio_node_id": "6",
+    "reference_audio_input_key": "audio",
+    "seed_node_id": "4",
+    "seed_input_key": "seed",
+    "exaggeration_node_id": "4",
+    "exaggeration_input_key": "exaggeration"
+  },
   "required_models": [
     { "filename": "z_image_turbo_bf16.safetensors", "folder": "diffusion_models" },
     { "filename": "qwen_3_4b.safetensors", "folder": "text_encoders" },
-    { "filename": "ae.safetensors", "folder": "vae" }
+    { "filename": "ae.safetensors", "folder": "vae" },
+    { "filename": "chatterbox_tts_model.safetensors", "folder": "checkpoints" }
   ],
-  "required_node_packs": []
+  "required_node_packs": [
+    "ComfyUI-FL-TTS"
+  ]
 }
