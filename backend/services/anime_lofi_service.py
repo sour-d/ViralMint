@@ -521,12 +521,19 @@ async def _extract_random_track(temp_dir: Path) -> Path:
     duration = end_sec - track["start_sec"]
     if duration <= 0:
         duration = 60
+    # Skip the first ~10s of the track to avoid intro silence
+    offset = min(10.0, duration * 0.3)
+    seek = track["start_sec"] + offset
+    extract_dur = duration - offset
+    if extract_dur < 5:
+        seek = track["start_sec"]
+        extract_dur = duration
     out_path = temp_dir / f"bg_{uuid.uuid4().hex[:8]}.m4a"
     cmd = [
         "ffmpeg", "-y",
-        "-ss", str(track["start_sec"]),
+        "-ss", str(seek),
         "-i", str(MUSIC_FILE.resolve()),
-        "-t", str(duration),
+        "-t", str(extract_dur),
         "-c:a", "aac",
         "-q:a", "2",
         str(out_path.resolve()),
