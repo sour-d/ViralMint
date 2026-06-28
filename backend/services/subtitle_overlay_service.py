@@ -1,7 +1,8 @@
-"""Subtitle overlay via moviepy TextClip — 9:16 vertical video (1080×1920)."""
+"""Subtitle overlay via moviepy — 9:16 vertical video (1080×1920)."""
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import TextClip, CompositeVideoClip
+from moviepy import TextClip, CompositeVideoClip
+from moviepy.video.fx import CrossFadeIn, CrossFadeOut
 
 _FONT_PATH = str(Path(__file__).resolve().parent.parent.parent / "font" / "PlayfairDisplay-VariableFont_wght.ttf")
 
@@ -82,20 +83,19 @@ def add_subtitle(
 
     txt_clip = (
         TextClip(
-            wrapped,
-            fontsize=font_size,
+            text=wrapped,
             font=font_path,
+            font_size=font_size,
             color=color,
             stroke_color=stroke_color,
             stroke_width=stroke_width,
             method="label",
-            align="center",
+            text_align="center",
         )
-        .set_start(start_time)
-        .set_duration(duration)
-        .set_position(position)
-        .crossfadein(fade_duration)
-        .crossfadeout(fade_duration)
+        .with_start(start_time)
+        .with_duration(duration)
+        .with_position(position)
+        .with_effects([CrossFadeIn(fade_duration), CrossFadeOut(fade_duration)])
     )
 
     return CompositeVideoClip([video_clip, txt_clip], size=video_clip.size)

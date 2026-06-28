@@ -356,7 +356,7 @@ _SUBTITLE_FONT = str(Path(__file__).resolve().parent.parent.parent / "font" / "P
 
 def _render_subtitle_clip(src_path: str, text: str, out_path: str):
     """Synchronous helper — render one video segment with subtitle overlaid."""
-    from moviepy.editor import VideoFileClip
+    from moviepy import VideoFileClip
     from backend.services.subtitle_overlay_service import add_subtitle
 
     clip = VideoFileClip(src_path)
