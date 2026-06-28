@@ -115,7 +115,7 @@ export default function AnimeLofiStudio() {
     retryImagePollsRef.current = {}
   }
 
-  // Build the full state object
+  // Build the full state object (camelCase keys match JavaScript variable names)
   const currentState = { activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo }
 
   // Persist to localStorage (immediate fallback)
@@ -130,8 +130,9 @@ export default function AnimeLofiStudio() {
   useEffect(() => {
     if (!sessionId) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    const stateToSave = currentState  // capture for closure
     saveTimerRef.current = setTimeout(() => {
-      saveSession(sessionId, currentState)
+      saveSession(sessionId, stateToSave)
     }, 2000)
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
   }, [sessionId, currentState.activeStep, currentState.userIdea, currentState.segments,
@@ -150,14 +151,14 @@ export default function AnimeLofiStudio() {
         if (lastId) {
           const state = await loadSession(lastId)
           setSessionId(lastId)
-          setActiveStep(state.active_step ?? 0)
-          setUserIdea(state.user_idea ?? "")
+          setActiveStep(state.activeStep ?? state.active_step ?? 0)
+          setUserIdea(state.userIdea ?? state.user_idea ?? "")
           setSegments(state.segments ?? [])
-          setFullScript(state.full_script ?? "")
-          setAudioInfo(state.audio_info ?? null)
+          setFullScript(state.fullScript ?? state.full_script ?? "")
+          setAudioInfo(state.audioInfo ?? state.audio_info ?? null)
           setImages(state.images ?? [])
           setVideos(state.videos ?? [])
-          setFinalVideo(state.final_video ?? null)
+          setFinalVideo(state.finalVideo ?? state.final_video ?? null)
         }
       } catch { /* session stale or deleted — ignore */ }
       // Always refresh the session list
@@ -428,14 +429,14 @@ export default function AnimeLofiStudio() {
     try {
       const state = await loadSession(sid)
       setSessionId(sid)
-      setActiveStep(state.active_step ?? 0)
-      setUserIdea(state.user_idea ?? "")
+      setActiveStep(state.activeStep ?? state.active_step ?? 0)
+      setUserIdea(state.userIdea ?? state.user_idea ?? "")
       setSegments(state.segments ?? [])
-      setFullScript(state.full_script ?? "")
-      setAudioInfo(state.audio_info ?? null)
+      setFullScript(state.fullScript ?? state.full_script ?? "")
+      setAudioInfo(state.audioInfo ?? state.audio_info ?? null)
       setImages(state.images ?? [])
       setVideos(state.videos ?? [])
-      setFinalVideo(state.final_video ?? null)
+      setFinalVideo(state.finalVideo ?? state.final_video ?? null)
       localStorage.setItem(LAST_SESSION_KEY, sid)
       setSessionOpen(false)
     } catch (e) { setError("Failed to load session") }
