@@ -474,6 +474,70 @@ async def _trim_segment_videos(videos: list[dict]) -> list[dict]:
     return result
 
 
+# ── Background music from asset track ───────────────────────────────
+
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+TRACK_FILE = ASSETS_DIR / "lofi-piano-track-details.txt"
+MUSIC_FILE = ASSETS_DIR / "lofi-piano.webm"
+
+
+def _parse_track_file() -> list[dict]:
+    import re
+    tracks = []
+    for line in TRACK_FILE.read_text().strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r'\[(\d+):(\d+):(\d+)\]\s*(.*)', line)
+        if m:
+            tracks.append({"start_sec": int(m.group(1))*3600 + int(m.group(2))*60 + int(m.group(3)), "name": m.group(4)})
+            continue
+        m = re.match(r'\[(\d+):(\d+)\]\s*(.*)', line)
+        if m:
+            tracks.append({"start_sec": int(m.group(1))*60 + int(m.group(2)), "name": m.group(3)})
+    return tracks
+
+
+async def _get_total_duration(path: Path) -> float:
+    probe = await asyncio_run_subprocess([
+        "ffprobe", "-v", "error", "-show_entries",
+        "format=duration", "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(path),
+    ])
+    if probe.returncode == 0:
+        return float((probe.stdout or b"").decode().strip() or 0)
+    return 0
+
+
+async def _extract_random_track(temp_dir: Path) -> Path:
+    tracks = _parse_track_file()
+    total_dur = await _get_total_duration(MUSIC_FILE)
+    if not tracks:
+        raise RuntimeError("No tracks found in track file")
+    idx = random.randint(0, len(tracks) - 1)
+    track = tracks[idx]
+    end_sec = tracks[idx + 1]["start_sec"] if idx + 1 < len(tracks) else total_dur
+    duration = end_sec - track["start_sec"]
+    if duration <= 0:
+        duration = 60
+    out_path = temp_dir / f"bg_{uuid.uuid4().hex[:8]}.m4a"
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(track["start_sec"]),
+        "-i", str(MUSIC_FILE.resolve()),
+        "-t", str(duration),
+        "-c:a", "aac",
+        "-q:a", "2",
+        str(out_path.resolve()),
+    ]
+    proc = await asyncio_run_subprocess(cmd)
+    if proc.returncode != 0:
+        raise RuntimeError(f"Failed to extract background track: {(proc.stderr or b'')[:200]}")
+    logger.info("Background track: %s (%s, %.1fs)", track["name"], out_path.name, duration)
+    return out_path
+
+
 # ── Step 6: Compilation Video (concat segment clips + audio) ───────────
 
 async def render_compilation_video(
@@ -537,35 +601,48 @@ async def render_compilation_video(
 
     concat_file.write_text("\n".join(concat_lines))
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_file),
-        "-i", str(audio_path.resolve()),
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-shortest",
-        "-movflags", "+faststart",
-        str(output_path.resolve()),
-    ]
+    bg_track = None
+    if TRACK_FILE.exists() and MUSIC_FILE.exists():
+        try:
+            bg_track = await _extract_random_track(OUTPUT_DIR)
+        except Exception as e:
+            logger.warning("Failed to extract background track: %s", e)
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_file),
-        "-i", str(audio_path.resolve()),
-        "-map", "0:v:0",       # video from concat (strips any audio from segment clips)
-        "-map", "1:a:0",       # audio from master audio track
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-shortest",
-        "-movflags", "+faststart",
-        str(output_path.resolve()),
-    ]
+    if bg_track and bg_track.exists():
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_file),
+            "-i", str(audio_path.resolve()),
+            "-i", str(bg_track.resolve()),
+            "-filter_complex",
+            "[1:a]volume=1.0[a_voice];[2:a]volume=0.5[a_music];[a_voice][a_music]amix=inputs=2:duration=first[a]",
+            "-map", "0:v:0",
+            "-map", "[a]",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-shortest",
+            "-movflags", "+faststart",
+            str(output_path.resolve()),
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_file),
+            "-i", str(audio_path.resolve()),
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-shortest",
+            "-movflags", "+faststart",
+            str(output_path.resolve()),
+        ]
 
     logger.info("Rendering compilation video: %s", " ".join(cmd))
     proc = await asyncio_run_subprocess(cmd)
@@ -574,6 +651,8 @@ async def render_compilation_video(
         raise RuntimeError(f"FFmpeg compilation failed (code {proc.returncode}): {stderr}")
 
     concat_file.unlink(missing_ok=True)
+    if bg_track and bg_track.exists():
+        bg_track.unlink(missing_ok=True)
 
     # Clean up temp files
     import shutil
