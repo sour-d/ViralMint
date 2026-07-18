@@ -66,7 +66,7 @@ async def runpod_workflow(type: str = "ltx"):
     """Return workflow metadata for the ComfyUI setup tab.
 
     Accepts ``type=ltx`` (LTX audio→video), ``type=ltx-img2vid`` (LTX image→video),
-    or ``type=z-turbo`` (Z-turbo txt2img).
+    ``type=z-turbo`` (Z-turbo txt2img), or ``type=tts`` (Higgs v3 TTS).
     """
     # Shared model list helper
     def _manifest_models(workflow_tag: str) -> list[dict]:
@@ -142,6 +142,42 @@ async def runpod_workflow(type: str = "ltx"):
             },
         }
 
+    # TTS (Higgs v3 Voice Clone) workflow
+    if type == "tts":
+        anime_lofi_mapping = WORKFLOWS_DIR / "runpod_mapping_anime_lofi.json"
+        if not anime_lofi_mapping.exists():
+            return {
+                "kind": "tts",
+                "workflow_file": "higgs-text-to-audio-with-clone-api.json",
+                "mapping_file": "runpod_mapping_anime_lofi.json",
+                "audio_required": True,
+                "required_models": [],
+                "required_node_packs": [],
+                "configured": False,
+                "download_urls": {
+                    "workflow": "/api/runpod/workflow/download?kind=higgs_tts",
+                    "mapping": "/api/runpod/workflow/download?kind=anime_lofi_mapping",
+                },
+            }
+        with open(anime_lofi_mapping, encoding="utf-8") as f:
+            mapping = json.load(f)
+        return {
+            "kind": "tts",
+            "workflow_file": mapping.get("tts", {}).get("workflow_file", "higgs-text-to-audio-with-clone-api.json"),
+            "mapping_file": "runpod_mapping_anime_lofi.json",
+            "audio_required": True,
+            "required_models": [],
+            "required_node_packs": mapping.get("required_node_packs", []),
+            "configured": all(
+                mapping.get("tts", {}).get(k) and mapping["tts"][k] != "REPLACE_ME"
+                for k in ("prompt_node_id", "save_audio_node_id", "reference_audio_node_id")
+            ),
+            "download_urls": {
+                "workflow": "/api/runpod/workflow/download?kind=higgs_tts",
+                "mapping": "/api/runpod/workflow/download?kind=anime_lofi_mapping",
+            },
+        }
+
     # Default: LTX audio→video workflow
     mapping = runpod_service.load_workflow_mapping()
     mapping_configured = all(
@@ -173,10 +209,11 @@ async def runpod_workflow_download(kind: str = "api"):
         "anime_lofi_txt2img": "anime_lofi_txt2img.json",
         "anime_lofi_img2vid": "anime_lofi_img2vid.json",
         "anime_lofi_mapping": "runpod_mapping_anime_lofi.json",
+        "higgs_tts": "higgs-text-to-audio-with-clone-api.json",
     }
     filename = WORKFLOW_FILES.get(kind) or ANIME_LOFI_FILES.get(kind)
     if not filename:
-        raise HTTPException(400, detail="Invalid kind. Options: api, ui, mapping, anime_lofi_txt2img, anime_lofi_img2vid, anime_lofi_mapping")
+        raise HTTPException(400, detail="Invalid kind. Options: api, ui, mapping, anime_lofi_txt2img, anime_lofi_img2vid, anime_lofi_mapping, higgs_tts")
 
     path = WORKFLOWS_DIR / filename
     if not path.is_file():
@@ -284,7 +321,7 @@ async def runpod_setup(type: str = "all"):
     from backend.agents.job_helper import create_job
     from backend.core.task_runner import run_install_runpod_models, dispatch
 
-    if type not in ("ltx", "z-turbo", "ltx-img2vid", "all"):
+    if type not in ("ltx", "z-turbo", "ltx-img2vid", "tts", "all"):
         raise HTTPException(400, detail="type must be ltx, ltx-img2vid, z-turbo, or all")
 
     user_settings = await _get_user_settings()
@@ -297,7 +334,7 @@ async def runpod_setup(type: str = "all"):
     if not status.get("comfy_ready"):
         raise HTTPException(503, detail="ComfyUI is not ready on the pod")
 
-    wf_label = {"ltx": "LTX", "ltx-img2vid": "LTX img2vid", "z-turbo": "Z-turbo", "all": "all"}[type]
+    wf_label = {"ltx": "LTX", "ltx-img2vid": "LTX img2vid", "z-turbo": "Z-turbo", "tts": "Higgs TTS", "all": "all"}[type]
 
     job = await create_job("runpod_install_models", "local", {"workflow_type": type})
     dispatch(run_install_runpod_models(job_id=job.id, user_id="local"))
@@ -406,8 +443,8 @@ async def runpod_delete_models(type: str = "all"):
     """Return file paths of models for the given workflow on the pod (manual deletion)."""
     from backend.services.runpod_setup import _manifest_model_entries
 
-    if type not in ("ltx", "z-turbo", "ltx-img2vid", "all"):
-        raise HTTPException(400, detail="type must be ltx, ltx-img2vid, z-turbo, or all")
+    if type not in ("ltx", "z-turbo", "ltx-img2vid", "tts", "all"):
+        raise HTTPException(400, detail="type must be ltx, ltx-img2vid, z-turbo, tts, or all")
 
     wf = type if type != "all" else None
     entries = _manifest_model_entries(workflow=wf)
@@ -416,7 +453,7 @@ async def runpod_delete_models(type: str = "all"):
         for e in entries
     ]
 
-    wf_label = {"ltx": "LTX", "ltx-img2vid": "LTX img2vid", "z-turbo": "Z-turbo", "all": "all"}[type]
+    wf_label = {"ltx": "LTX", "ltx-img2vid": "LTX img2vid", "z-turbo": "Z-turbo", "tts": "Higgs TTS", "all": "all"}[type]
     return {
         "ok": True,
         "workflow": type,

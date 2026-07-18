@@ -29,7 +29,7 @@ export const creatorNiches = [
   },
   {
     slug: "anime-lofi",
-    label: "Visual Narrative",
+    label: "anime-lofi",
     description: "Script → Audio → Image-per-segment → Raw video. Cinematic storytelling with a unique image per 3-4 second clip.",
     promptSeed: "Write a vivid descriptive script that creates distinct visual scenes, each sentence evoking a different image.",
     accent: "#6495ed",

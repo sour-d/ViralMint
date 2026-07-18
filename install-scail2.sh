@@ -18,7 +18,7 @@ https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_f
 wget -c -P $BASE/text_encoders \
 https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors
 
-wget -c -O $BASE/vae/wan_2.1_vae.safetensors \
+wget -c -O $BASE/vae \
 https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors
 
 wget -c -P $BASE/loras \
@@ -28,13 +28,13 @@ wget -c -P $BASE/loras \
 https://huggingface.co/Comfy-Org/SCAIL-2/resolve/main/loras/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors
 
 #Full Precision <-- 33 GB
-# wget -c -P $BASE/diffusion_models \
-# https://huggingface.co/Comfy-Org/SCAIL-2/resolve/main/diffusion_models/wan2.1_14B_SCAIL_2_fp16.safetensors
+wget -c -P $BASE/diffusion_models \
+https://huggingface.co/Comfy-Org/SCAIL-2/resolve/main/diffusion_models/wan2.1_14B_SCAIL_2_fp16.safetensors
 
 # FP8 Scaled <-- 17 GB
 # wget -c -P $BASE/diffusion_models \
 # https://huggingface.co/Comfy-Org/SCAIL-2/resolve/main/diffusion_models/wan2.1_14B_SCAIL_2_fp8_scaled.safetensors
 
 # NVFP4 MXPF8 Mix <-- 11 GB
-wget -c -P $BASE/diffusion_models \
-https://huggingface.co/Comfy-Org/SCAIL-2/resolve/main/diffusion_models/wan2.1_14B_SCAIL_2_nvfp4_mxpf8_mix.safetensors
+# wget -c -P $BASE/diffusion_models \
+# https://huggingface.co/Comfy-Org/SCAIL-2/resolve/main/diffusion_models/wan2.1_14B_SCAIL_2_nvfp4_mxpf8_mix.safetensors

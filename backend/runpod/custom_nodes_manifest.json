@@ -13,6 +13,17 @@
       "class_type_prefixes": ["LTXV", "LTXAV", "TextGenerateLTX", "EmptyLTXV"]
     },
     {
+      "id": "higgs-v3-tts-comfyui",
+      "title": "Higgs v3 TTS ComfyUI",
+      "name": "Higgs_v3-TTS-ComfyUI",
+      "author": "Saganaki22",
+      "reference": "https://github.com/Saganaki22/Higgs_v3-TTS-ComfyUI",
+      "files": ["https://github.com/Saganaki22/Higgs_v3-TTS-ComfyUI"],
+      "install_type": "git-clone",
+      "description": "Higgs Audio v3 TTS 4B — voice cloning and TTS",
+      "class_type_prefixes": ["HiggsV3"]
+    },
+    {
       "id": "comfymath",
       "title": "ComfyMath",
       "name": "ComfyMath",

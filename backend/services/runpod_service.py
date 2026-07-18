@@ -69,6 +69,165 @@ async def start_pod(api_key: str, pod_id: str) -> dict:
         return resp.json() if resp.content else {"id": pod_id}
 
 
+# ── SSH key management (GraphQL) ───────────────────────────────────────
+
+RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql"
+VIRALMINT_SSH_DIR = Path.home() / ".ssh"
+VIRALMINT_SSH_KEY = VIRALMINT_SSH_DIR / "viralmint_runpod"
+VIRALMINT_SSH_PUB_KEY = VIRALMINT_SSH_DIR / "viralmint_runpod.pub"
+
+KNOWN_SSH_KEYS: list[Path] = [
+    VIRALMINT_SSH_KEY,
+    Path.home() / ".ssh" / "id_ed25519",
+    Path.home() / ".ssh" / "id_rsa",
+    Path.home() / ".ssh" / "id_ecdsa",
+]
+
+
+def _find_ssh_private_key() -> list[Path]:
+    """Return all personal SSH private keys found in ``~/.ssh/``, in priority order."""
+    return [k for k in KNOWN_SSH_KEYS if k.exists()]
+
+
+async def _runpod_graphql(api_key: str, query: str, variables: dict | None = None) -> dict:
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            RUNPOD_GRAPHQL_URL,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"query": query, "variables": variables or {}},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("errors"):
+            raise RuntimeError(f"GraphQL error: {data['errors']}")
+        return data.get("data", {})
+
+
+async def add_ssh_key_to_runpod(api_key: str, public_key: str) -> None:
+    """Append a public SSH key to the user's RunPod account."""
+    # First fetch existing keys
+    query = """
+    query { myself { settings { pubKey } } }
+    """
+    data = await _runpod_graphql(api_key, query)
+    existing = (data.get("myself", {}).get("settings", {}) or {}).get("pubKey", "")
+
+    if public_key.strip() in existing:
+        return  # already present
+
+    new_keys = (existing.strip() + "\n\n" + public_key.strip()).strip()
+    mutation = """
+    mutation($input: UpdateUserSettingsInput) {
+      updateUserSettings(input: $input) { id }
+    }
+    """
+    await _runpod_graphql(api_key, mutation, {"input": {"pubKey": new_keys}})
+
+
+def _ensure_viralmint_ssh_key() -> Path:
+    """Generate the ViralMint SSH key pair if missing. Returns private key path."""
+    VIRALMINT_SSH_DIR.mkdir(parents=True, exist_ok=True)
+    if not VIRALMINT_SSH_KEY.exists():
+        import subprocess as _sp
+        _sp.run(
+            ["ssh-keygen", "-t", "ed25519", "-C", "viralmint@runpod", "-f", str(VIRALMINT_SSH_KEY), "-N", ""],
+            capture_output=True, check=True,
+        )
+    return VIRALMINT_SSH_KEY
+
+
+async def get_pod_ssh_info(api_key: str, pod_id: str) -> dict:
+    """Get SSH connection info for a pod — both direct TCP and proxy gateway."""
+    pod = await get_pod(api_key, pod_id)
+    if not pod:
+        return {"ok": False, "error": "Pod not found"}
+
+    # Direct TCP SSH
+    public_ip = (pod.get("publicIp") or "").strip()
+    port_mappings = pod.get("portMappings", {}) or {}
+    raw_port = port_mappings.get("22") or port_mappings.get("22/tcp") or 22
+    direct_port = int(raw_port) if public_ip else None
+
+    # Proxy SSH via ssh.runpod.io (authenticates via RunPod account keys)
+    proxy_user = (pod.get("sshUsername") or "").strip()
+    proxy_host = (pod.get("sshHost") or "ssh.runpod.io").strip()
+
+    return {
+        "ok": True,
+        "public_ip": public_ip,
+        "direct_port": direct_port,
+        "proxy_user": proxy_user,
+        "proxy_host": proxy_host,
+        "pod": pod,
+    }
+
+
+async def execute_pod_command_ssh(api_key: str, pod_id: str, command: str) -> dict:
+    """Run a shell command on the pod via SSH, using ViralMint's key + proxy gateway."""
+    import asyncio
+
+    # 1. Ensure ViralMint SSH key exists + is in RunPod account
+    priv_key_path = _ensure_viralmint_ssh_key()
+    try:
+        pub_key_text = VIRALMINT_SSH_PUB_KEY.read_text().strip()
+        await add_ssh_key_to_runpod(api_key, pub_key_text)
+    except Exception as e:
+        logger.warning("Failed to add SSH key to RunPod account: %s", e)
+
+    # 2. Get pod SSH info
+    info = await get_pod_ssh_info(api_key, pod_id)
+    if not info.get("ok"):
+        return info
+
+    # 3. Build SSH command — try proxy first, then direct TCP
+    strategies = []
+    if info["proxy_user"] and info["proxy_host"]:
+        strategies.append(("proxy", info["proxy_host"], 22, info["proxy_user"]))
+    if info["public_ip"] and info["direct_port"]:
+        strategies.append(("direct", info["public_ip"], info["direct_port"], "root"))
+
+    last_err = ""
+    for strategy_name, host, port, user in strategies:
+        ssh_cmd = [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "ConnectTimeout=15",
+            "-o", "LogLevel=ERROR",
+            "-i", str(priv_key_path),
+            "-p", str(port),
+            f"{user}@{host}",
+            command,
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *ssh_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            last_err = f"SSH timed out ({strategy_name}:{host}:{port})"
+            continue
+        except FileNotFoundError:
+            return {"ok": False, "error": "ssh binary not found on ViralMint server"}
+
+        if proc.returncode == 0:
+            return {"ok": True, "output": stdout.decode().strip()}
+        err_text = stderr.decode().strip() or f"SSH exited with code {proc.returncode}"
+        last_err = f"{err_text} ({strategy_name}:{host}:{port})"
+        if "Permission denied" in err_text or "publickey" in err_text:
+            continue
+        break
+
+    return {"ok": False, "error": last_err}
+
+
 async def create_pod(api_key: str) -> dict:
     body = {
         "name": pod_config.POD_NAME,

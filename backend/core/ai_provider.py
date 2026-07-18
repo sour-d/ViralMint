@@ -125,11 +125,19 @@ class AIClient:
         system: Optional[str] = None,
         max_tokens: int = 2048,
     ) -> str:
-        """Non-streaming — returns full response string."""
+        """Non-streaming — returns full response string.
+
+        Some OpenRouter free models don't stream reliably. If streaming
+        returns empty, fall back to a non-streaming call.
+        """
         chunks = []
         async for chunk in self.chat_stream(messages, system, max_tokens):
             chunks.append(chunk)
-        return "".join(chunks)
+        result = "".join(chunks)
+        if not result and self.provider == AIProvider.OPENROUTER:
+            logger.info("Stream returned empty for %s — retrying non-streaming", self.model)
+            result = await self._openrouter_chat(messages, system, max_tokens)
+        return result
 
     # ── Provider implementations ──────────────────────────────────────────────
 
@@ -209,6 +217,33 @@ class AIClient:
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta
+
+    async def _openrouter_chat(
+        self,
+        messages: list[dict],
+        system: Optional[str] = None,
+        max_tokens: int = 2048,
+    ) -> str:
+        """Non-streaming OpenRouter call — fallback for free models."""
+        import openai
+        client = openai.AsyncOpenAI(
+            api_key=self.api_key,
+            base_url="https://openrouter.ai/api/v1",
+            default_headers=_OPENROUTER_HEADERS,
+            timeout=55.0,
+        )
+        full_messages = []
+        if system:
+            full_messages.append({"role": "system", "content": system})
+        full_messages.extend(messages)
+
+        response = await client.chat.completions.create(
+            model=self.model,
+            messages=full_messages,
+            stream=False,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content or ""
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────

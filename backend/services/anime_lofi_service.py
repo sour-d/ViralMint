@@ -1,6 +1,5 @@
 """Anime Lo-fi — Script → Audio → Image-per-segment → Raw Video."""
 import asyncio
-import importlib.util
 import json
 import logging
 import random
@@ -17,8 +16,6 @@ from backend.services.tts_service import generate_tts, TTSProvider
 from backend.services.whisper_service import whisper_service
 
 logger = logging.getLogger(__name__)
-
-_HAS_MOVIEPY = importlib.util.find_spec("moviepy") is not None
 
 STORAGE = Path("storage/anime_lofi")
 AUDIO_DIR = STORAGE / "audio"
@@ -80,6 +77,8 @@ async def generate_audio(
         from backend.services.anime_lofi_comfy import generate_audio_on_runpod
         result = await generate_audio_on_runpod(text=script, user_settings=user_settings)
         logger.info("Audio generated via ComfyUI Chatterbox RT2Voice")
+        audio_path = Path(result["path"])
+        result["duration"] = await _get_total_duration(audio_path)
         return result
     except Exception as e:
         logger.warning("ComfyUI TTS failed (%s), falling back to local TTS", e)
@@ -104,7 +103,9 @@ async def generate_audio(
     import shutil
     shutil.copy2(audio_path, final_path)
 
-    return {"filename": filename, "path": str(final_path), "url": f"/api/anime-lofi/media/{filename}"}
+    duration = await _get_total_duration(final_path)
+
+    return {"filename": filename, "path": str(final_path), "url": f"/api/anime-lofi/media/{filename}", "duration": duration}
 
 
 # ── Step 3: Transcribe + Align to LLM segments ─────────────────────────
@@ -135,31 +136,46 @@ async def transcribe_audio(audio_filename: str, script_text: str) -> dict:
 
 
 def align_segment_durations(segments: list[dict], words: list[dict]) -> list[dict]:
-    """Map LLM segments to Whisper word timestamps, adding ``duration_sec``.
+    """Distribute total audio duration across segments proportionally by word count.
 
-    Returns a new list of segment dicts enriched with ``duration_sec``.
-    The mapping is done by word count proportion (LLM voiceover → Whisper words).
+    Each segment gets a ``duration_sec`` that reflects its share of the
+    total Whisper word-aligned time, avoiding drift when LLM voiceover
+    word counts don't match Whisper's transcription word count exactly.
     """
+    if not words or not segments:
+        return [{**s, "duration_sec": 3.0} for s in segments]
+
+    total_audio_dur = words[-1]["end"] - words[0]["start"]
+    if total_audio_dur <= 0:
+        return [{**s, "duration_sec": 3.0} for s in segments]
+
+    total_llm_words = sum(
+        len((seg.get("voiceover") or seg.get("text") or "").split())
+        for seg in segments
+    )
+    if total_llm_words == 0:
+        return [{**s, "duration_sec": 3.0} for s in segments]
+
     enriched = []
     word_idx = 0
-    total_ws = len(words)
-
     for seg in segments:
         voiceover = seg.get("voiceover", "") or seg.get("text", "")
-        seg_words = voiceover.split()
-        count = len(seg_words)
-
-        if count == 0 or word_idx >= total_ws:
-            enriched.append({**seg, "duration_sec": 3.0})
+        seg_word_count = len(voiceover.split())
+        if seg_word_count == 0:
+            enriched.append({**seg, "duration_sec": 1.5})
             continue
 
-        start = words[word_idx]["start"]
-        end_idx = min(word_idx + count - 1, total_ws - 1)
-        end = words[end_idx]["end"]
-        dur = round(max(end - start, 1.5), 2)
+        fraction = seg_word_count / total_llm_words
+        dur = round(max(total_audio_dur * fraction, 1.5), 2)
 
-        enriched.append({**seg, "duration_sec": dur})
-        word_idx += count
+        # Snap start/end to actual Whisper word timestamps for accuracy
+        start_ws = words[word_idx]["start"] if word_idx < len(words) else 0
+        end_idx = min(word_idx + seg_word_count - 1, len(words) - 1)
+        end_ws = words[end_idx]["end"] if end_idx >= 0 else total_audio_dur
+        snapped = round(max(end_ws - start_ws, 1.5), 2)
+
+        enriched.append({**seg, "duration_sec": min(dur, snapped)})
+        word_idx += seg_word_count
 
     return enriched
 
@@ -348,77 +364,6 @@ async def generate_segment_videos(
         return result
 
 
-# ── Subtitle overlay pre-processing ──────────────────────────────────
-
-SUBTITLE_DIR = VIDEOS_DIR / "subtitled"
-_SUBTITLE_FONT = str(Path(__file__).resolve().parent.parent.parent / "font" / "PlayfairDisplay-VariableFont_wght.ttf")
-
-
-def _render_subtitle_clip(src_path: str, text: str, out_path: str):
-    """Synchronous helper — render one video segment with subtitle overlaid."""
-    from moviepy import VideoFileClip
-    from backend.services.subtitle_overlay_service import add_subtitle
-
-    clip = VideoFileClip(src_path)
-    composited = add_subtitle(
-        video_clip=clip,
-        text=text,
-        start_time=0,
-        end_time=clip.duration,
-        font_path=_SUBTITLE_FONT,
-    )
-    composited.write_videofile(
-        out_path,
-        codec="libx264",
-        audio_codec="aac",
-        preset="fast",
-        logger=None,
-    )
-    composited.close()
-    clip.close()
-
-
-async def _overlay_subtitles(videos: list[dict]) -> list[dict]:
-    """Overlay per-segment voiceover text on each video clip.
-
-    Falls back to the original clips if moviepy or ImageMagick is unavailable.
-    """
-    if not _HAS_MOVIEPY:
-        logger.warning("moviepy not installed — skipping subtitle overlay")
-        return videos
-
-    SUBTITLE_DIR.mkdir(parents=True, exist_ok=True)
-    loop = asyncio.get_running_loop()
-    result = []
-
-    for i, vid in enumerate(videos):
-        text = (vid.get("segment_text") or "").strip()
-        src_path = Path(vid["path"])
-
-        if not text or not src_path.exists():
-            result.append(vid)
-            continue
-
-        stem = src_path.stem
-        out_path = SUBTITLE_DIR / f"sub_{stem}_{uuid.uuid4().hex[:8]}.mp4"
-
-        try:
-            await loop.run_in_executor(
-                None, _render_subtitle_clip, str(src_path), text, str(out_path),
-            )
-        except Exception as exc:
-            logger.warning("Subtitle overlay failed for segment %s: %s", i, exc)
-            result.append(vid)
-            continue
-
-        if out_path.exists():
-            result.append({**vid, "path": str(out_path), "filename": out_path.name})
-        else:
-            result.append(vid)
-
-    return result
-
-
 # ── Segment trimming (5s → aligned duration) ─────────────────────────
 
 TRIMMED_DIR = OUTPUT_DIR / "trimmed"
@@ -561,11 +506,8 @@ async def render_compilation_video(
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio not found: {audio_path}")
 
-    # ── Overlay subtitles on each segment video ──────────────────────
-    subtitled = await _overlay_subtitles(videos)
-
     # ── Trim per-segment 5s clips to aligned audio durations ─────────
-    trimmed = await _trim_segment_videos(subtitled)
+    trimmed = await _trim_segment_videos(videos)
 
     concat_file = OUTPUT_DIR / f"concat_vids_{uuid.uuid4().hex[:8]}.txt"
     output_filename = f"anime_lofi_final_{uuid.uuid4().hex[:8]}.mp4"
@@ -624,7 +566,7 @@ async def render_compilation_video(
             "-i", str(audio_path.resolve()),
             "-i", str(bg_track.resolve()),
             "-filter_complex",
-            "[1:a]volume=1.0[a_voice];[2:a]volume=0.5[a_music];[a_voice][a_music]amix=inputs=2:duration=first[a]",
+            "[1:a]volume=1.0[a_voice];[2:a]volume=0.6[a_music];[a_voice][a_music]amix=inputs=2:duration=first[a]",
             "-map", "0:v:0",
             "-map", "[a]",
             "-c:v", "libx264",
@@ -663,8 +605,6 @@ async def render_compilation_video(
 
     # Clean up temp files
     import shutil
-    if SUBTITLE_DIR.exists():
-        shutil.rmtree(SUBTITLE_DIR, ignore_errors=True)
     if TRIMMED_DIR.exists():
         shutil.rmtree(TRIMMED_DIR, ignore_errors=True)
 

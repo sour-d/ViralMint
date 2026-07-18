@@ -167,7 +167,9 @@ async def assess_pod(base_url: str, workflow: str | None = None) -> dict[str, An
 
     # Z-turbo and ltx-img2vid use only built-in / same-as-ltx nodes — skip node check
     nodes: dict[str, Any] = {"ready": True, "missing_class_types": [], "packs_needed": []}
-    if workflow not in ("z-turbo", "ltx-img2vid"):
+    if workflow == "tts":
+        nodes = _check_nodes(registered, required=workflow_class_types("higgs-text-to-audio-with-clone-api.json"))
+    elif workflow not in ("z-turbo", "ltx-img2vid"):
         nodes = _check_nodes(registered)
 
     models = _check_models(model_lists, workflow=workflow)
@@ -333,11 +335,15 @@ async def setup_pod(
     if on_progress:
         await on_progress(2, "Checking pod…")
 
+    # TTS workflow — download Higgs tokenizer files via RunpodDirect + install custom node
+    if workflow == "tts":
+        return await _setup_higgs(base_url, on_progress)
+
     assessment = await assess_pod(base_url, workflow=workflow)
 
     all_ready = assessment["custom_nodes_ready"] and assessment["models_ready"]
     if all_ready:
-        wf_label = {"ltx": "LTX", "ltx-img2vid": "LTX img2vid", "z-turbo": "Z-turbo"}.get(workflow or "", "All")
+        wf_label = {"ltx": "LTX", "ltx-img2vid": "LTX img2vid", "z-turbo": "Z-turbo", "tts": "Higgs TTS"}.get(workflow or "", "All")
         return {
             "ok": True,
             "skipped": True,
@@ -363,7 +369,7 @@ async def setup_pod(
                 "message": "ComfyUI-Manager not available — install custom nodes manually.",
             }
         else:
-            nodes_out = await _setup_nodes(base_url, on_progress, start_queue=False)
+            nodes_out = await _setup_nodes(base_url, on_progress, start_queue=False, workflow=workflow)
             if nodes_out.get("queued"):
                 if on_progress:
                     await on_progress(92, "Starting custom node install queue…")
@@ -460,15 +466,44 @@ async def cleanup_pod(
     }
 
 
+async def _setup_higgs(
+    base_url: str,
+    on_progress: Optional[Callable[[float, str], Awaitable[None]]] = None,
+) -> dict[str, Any]:
+    """Install Higgs v3 TTS custom node. The model auto-downloads on first workflow run
+    via ``download_if_missing: true`` from the public repo ``bosonai/higgs-audio-v3-tts-4b``.
+    """
+    if on_progress:
+        await on_progress(10, "Installing Higgs v3 TTS custom node…")
+
+    node_msg = "ComfyUI-Manager not available — install Higgs_v3-TTS-ComfyUI manually via git clone."
+    if await mgr.manager_available(base_url):
+        nodes_out = await _setup_nodes(base_url, on_progress, start_queue=True, workflow="tts")
+        node_msg = nodes_out.get("message", "Queued custom node install.")
+
+    return {
+        "ok": True,
+        "skipped": node_msg == "Custom nodes already present.",
+        "message": node_msg,
+        "downloaded": [],
+        "failed": [],
+        "custom_nodes": {"message": node_msg},
+    }
+
+
 async def _setup_nodes(
     base_url: str,
     on_progress: Optional[Callable[[float, str], Awaitable[None]]] = None,
     *,
     start_queue: bool = True,
+    workflow: str | None = None,
 ) -> dict[str, Any]:
     info = await mgr.comfy_get(base_url, "/object_info")
     registered = set(info.keys()) if isinstance(info, dict) else set()
-    check = _check_nodes(registered)
+    if workflow == "tts":
+        check = _check_nodes(registered, required=workflow_class_types("higgs-text-to-audio-with-clone-api.json"))
+    else:
+        check = _check_nodes(registered)
 
     if check["ready"]:
         return {

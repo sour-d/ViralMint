@@ -511,7 +511,7 @@
   },
   "320:313": {
     "inputs": {
-      "text": "worst quality, low quality, morphing, melting, distorted anatomy, mutating, character moving, turning around, changing clothes, inconsistent motion, jittery, flickering background, sudden cuts, scene transitions, fast camera movement, blurry, text, watermarks, deformed umbrella, messy reflections",
+      "text": "worst quality, low quality, morphing, melting, distorted anatomy, mutating, character moving, turning around, changing clothes, inconsistent motion, jittery, flickering background, sudden cuts, scene transitions, camera panning, camera zooming, dolly movement, fast camera movement, blurry, text, watermarks, deformed umbrella, messy reflections",
       "clip": ["320:317", 0]
     },
     "class_type": "CLIPTextEncode",

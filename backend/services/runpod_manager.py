@@ -258,6 +258,60 @@ async def _comfy_post(
             return False, 0, str(exc)
 
 
+async def download_file_runpod_direct(
+    base_url: str,
+    url: str,
+    save_path: str,
+    filename: str,
+    *,
+    hf_token: str = "",
+    force: bool = False,
+) -> tuple[bool, str]:
+    """Download an arbitrary file to ``models/{save_path}/{filename}`` via RunpodDirect.
+
+    Set *force* to ``True`` to overwrite an existing file (deletes it first).
+    """
+    if not await runpod_direct_available(base_url):
+        return False, "runpod_direct_unavailable"
+
+    payload: dict[str, Any] = {
+        "url": url,
+        "save_path": save_path,
+        "filename": filename,
+    }
+    if hf_token:
+        payload["token"] = hf_token
+
+    ok, code, detail = await _comfy_post(
+        base_url,
+        "/server_download/start",
+        json_body=payload,
+        timeout=120,
+    )
+    if not ok:
+        detail_lower = (detail or "").lower()
+        if code == 400 and "already exists" in detail_lower:
+            if force:
+                # Delete existing file and retry
+                ok2, _ = await _comfy_post(
+                    base_url,
+                    "/server_download/delete",
+                    json_body={"save_path": save_path, "filename": filename},
+                    timeout=30,
+                )
+                if ok2:
+                    return await download_file_runpod_direct(
+                        base_url, url, save_path, filename, hf_token=hf_token, force=False,
+                    )
+            return True, ""
+        if code == 404:
+            return False, "runpod_direct_unavailable"
+        return False, detail or f"RunpodDirect start failed ({code})"
+
+    download_id = f"{save_path}/{filename}"
+    return await wait_for_runpod_download(base_url, download_id)
+
+
 async def runpod_direct_available(base_url: str) -> bool:
     """True when ComfyUI-RunpodDirect is installed (powers UI 'Download to Pod')."""
     return await get_ok(base_url, "/server_download/hf_token_status", timeout=8)

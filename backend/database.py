@@ -85,6 +85,9 @@ async def init_db():
         await _add_column_if_missing(conn, "user_settings", "runpod_api_key_encrypted", "TEXT")
         await _add_column_if_missing(conn, "user_settings", "runpod_pod_id", "VARCHAR(64)")
 
+    # Migrate deprecated model slugs
+    await _migrate_deprecated_models()
+
     # Clean up zombie jobs — any jobs stuck at "running"/"pending" from a previous crash
     await _cleanup_zombie_jobs()
 
@@ -105,6 +108,24 @@ async def _cleanup_zombie_jobs():
             await db.commit()
     except Exception as e:
         logger.warning(f"Zombie job cleanup failed: {e}")
+
+
+async def _migrate_deprecated_models():
+    """Replace deprecated model slugs with their current equivalents."""
+    try:
+        async with AsyncSessionLocal() as db:
+            from backend.models.user_settings import UserSettings
+            from sqlalchemy import update
+            result = await db.execute(
+                update(UserSettings)
+                .where(UserSettings.ai_model == "openrouter/owl-alpha")
+                .values(ai_model="openrouter/free")
+            )
+            if result.rowcount > 0:
+                logger.info(f"Migrated {result.rowcount} user(s) from openrouter/owl-alpha to openrouter/free")
+            await db.commit()
+    except Exception as e:
+        logger.warning(f"Model migration failed: {e}")
 
 
 async def _add_column_if_missing(conn, table: str, column: str, col_type: str):

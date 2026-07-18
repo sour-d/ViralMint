@@ -11,6 +11,7 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle"
 import MusicNoteIcon from "@mui/icons-material/MusicNote"
 import ImageIcon from "@mui/icons-material/Image"
 import VideocamIcon from "@mui/icons-material/Videocam"
+import DeleteIcon from "@mui/icons-material/Delete"
 import ReplayIcon from "@mui/icons-material/Replay"
 import SaveIcon from "@mui/icons-material/Save"
 import FolderOpenIcon from "@mui/icons-material/FolderOpen"
@@ -190,9 +191,9 @@ export default function AnimeLofiStudio() {
 
   const [editableScript, setEditableScript] = useState("")
 
-  // Sync editableScript from fullScript when it changes (first time or retry)
+  // Sync editableScript from fullScript whenever script is regenerated
   useEffect(() => {
-    if (fullScript && !editableScript) setEditableScript(fullScript)
+    if (fullScript) setEditableScript(fullScript)
   }, [fullScript])
 
   // ── Step 1: Audio ─────────────────────────────────────────────
@@ -760,16 +761,22 @@ export default function AnimeLofiStudio() {
                   </Grid>
                 )}
                 {videos.length > 0 && !videoProgress && (
-                  <Stack direction="row" spacing={2}>
-                    <Button variant="outlined" onClick={handleGenerateVideos} disabled={loading}
-                      startIcon={loading ? <CircularProgress size={18} /> : <ReplayIcon />}
-                      sx={{ borderRadius: 2, fontWeight: 700, textTransform: "none" }}>
-                      Regenerate All
-                    </Button>
-                    <Button variant="contained" onClick={() => setActiveStep(4)}
-                      sx={{ borderRadius: 2, fontWeight: 700, textTransform: "none" }}>
-                      Looks good, continue
-                    </Button>
+                  <Stack spacing={1.5}>
+                    <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                      Total: {videos.reduce((s, v) => s + (v.duration || 0), 0).toFixed(1)}s video ·{" "}
+                      Audio: {audioInfo?.duration != null ? `${audioInfo.duration.toFixed(1)}s` : "??"}
+                    </Typography>
+                    <Stack direction="row" spacing={2}>
+                      <Button variant="outlined" onClick={handleGenerateVideos} disabled={loading}
+                        startIcon={loading ? <CircularProgress size={18} /> : <ReplayIcon />}
+                        sx={{ borderRadius: 2, fontWeight: 700, textTransform: "none" }}>
+                        Regenerate All
+                      </Button>
+                      <Button variant="contained" onClick={() => setActiveStep(4)}
+                        sx={{ borderRadius: 2, fontWeight: 700, textTransform: "none" }}>
+                        Looks good, continue
+                      </Button>
+                    </Stack>
                   </Stack>
                 )}
               </Stack>
@@ -852,8 +859,8 @@ export default function AnimeLofiStudio() {
                       secondaryTypographyProps={{ fontSize: 12 }}
                     />
                     <IconButton edge="end" size="small" onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.session_id) }}
-                      sx={{ ml: 1, opacity: 0.4, "&:hover": { opacity: 1 } }}>
-                      <ReplayIcon fontSize="small" />
+                      sx={{ ml: 1, "&:hover": { color: "error.main" } }}>
+                      <DeleteIcon fontSize="small" />
                     </IconButton>
                   </ListItemButton>
                 )
@@ -862,6 +869,7 @@ export default function AnimeLofiStudio() {
           )}
         </DialogContent>
         <DialogActions>
+          <Button color="error" onClick={() => { clearSavedState(); setSessionId(null); setActiveStep(0); setUserIdea(""); setSegments([]); setFullScript(""); setAudioInfo(null); setImages([]); setVideos([]); setFinalVideo(null); setSessionOpen(false) }}>Start Fresh</Button>
           <Button onClick={() => { handleRefreshSessions(); setSessionOpen(false) }}>Close</Button>
         </DialogActions>
       </Dialog>

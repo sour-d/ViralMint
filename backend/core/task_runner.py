@@ -1076,7 +1076,7 @@ async def run_install_runpod_models(
                 payload = _json.loads(job_row.input_json)
                 workflow_type = payload.get("workflow_type")
 
-        if workflow_type not in ("ltx", "z-turbo", "ltx-img2vid", None):
+        if workflow_type not in ("ltx", "z-turbo", "ltx-img2vid", "tts", None):
             workflow_type = None
 
         await ws_manager.send({

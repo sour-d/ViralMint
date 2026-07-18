@@ -1,0 +1,66 @@
+{
+  "1": {
+    "inputs": {
+      "model": "Higgs Audio v3 TTS 4B - bosonai (auto-download)",
+      "dtype": "auto",
+      "device": "auto",
+      "attention": "auto",
+      "download_if_missing": true
+    },
+    "class_type": "HiggsV3LoadModel",
+    "_meta": {
+      "title": "Higgs v3 Load Model"
+    }
+  },
+  "8": {
+    "inputs": {
+      "audio": "en-reference-audio.mp3",
+      "audioUI": "/api/view?filename=en-reference-audio.mp3&type=input&subfolder=&rand=0.9229392481322962"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "quality": "V0",
+      "audioUI": "/api/view?filename=ComfyUI_00013.mp3&type=output&subfolder=audio&rand=0.8391343696954111",
+      "audio": [
+        "35",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Save Audio (MP3)"
+    }
+  },
+  "35": {
+    "inputs": {
+      "text": "मानसून का मौसम आषाढ़ और श्रावण, इन दो महीनों का होता है। गर्मी की चिलचिलाती धूप के बाद मानसून आता है। इस दौरान आसमान घने, काले बादलों से घिर जाता है और लगातार बारिश होती है। बारिश की आवाज़ मन को सुकून और ताज़गी देती है। मानसून में आस-पास की नदियाँ, नाले, नहरें और जल-क्षेत्र पानी से भर जाते हैं। प्रकृति एक ताज़ा, हरा-भरा रूप ले लेती है और किसान खेतों में धान की बुवाई में व्यस्त हो जाते हैं।",
+      "reference_text": "",
+      "max_new_tokens": 2048,
+      "temperature": 1,
+      "top_p": 0.95,
+      "top_k": 50,
+      "seed": 284384169,
+      "longform_chunking": true,
+      "words_per_chunk": 45,
+      "pause_between_chunks": 0.15,
+      "higgs_model": [
+        "1",
+        0
+      ],
+      "reference_audio": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "HiggsV3VoiceClone",
+    "_meta": {
+      "title": "Higgs v3 Voice Clone"
+    }
+  }
+}

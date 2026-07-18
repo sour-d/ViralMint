@@ -508,7 +508,7 @@ async def synthesize_prompt(
     {audio_kind, genre, mood, energy_label, prompt, model_used}.
 
     Routing:
-      - If the user's BYOK model is text-only (e.g. owl-alpha), we run a
+      - If the user's BYOK model is text-only (e.g. openrouter/free), we run a
         free vision model FIRST to caption the image, then send the caption
         + audio features to the BYOK as plain text. This lets you use any
         text-only free model as the "brain".

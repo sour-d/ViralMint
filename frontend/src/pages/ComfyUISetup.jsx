@@ -10,6 +10,7 @@ import DownloadIcon from "@mui/icons-material/Download"
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline"
 import VideoLibraryIcon from "@mui/icons-material/VideoLibrary"
 import ImageIcon from "@mui/icons-material/Image"
+import RecordVoiceOverIcon from "@mui/icons-material/RecordVoiceOver"
 import http from "../api/http"
 import RunPodStatusCard from "../components/runpod/RunPodStatusCard"
 import useAppStore from "../store/appStore"
@@ -217,9 +218,11 @@ export default function ComfyUISetup() {
   const [ltx, setLtx] = useState(null)
   const [ltxImg2vid, setLtxImg2vid] = useState(null)
   const [animeLofi, setAnimeLofi] = useState(null)
+  const [higgsTts, setHiggsTts] = useState(null)
   const [loadingLtx, setLoadingLtx] = useState(true)
   const [loadingLtxImg2vid, setLoadingLtxImg2vid] = useState(true)
   const [loadingAnimeLofi, setLoadingAnimeLofi] = useState(true)
+  const [loadingHiggsTts, setLoadingHiggsTts] = useState(true)
 
   const fetchLtx = useCallback(async () => {
     try {
@@ -245,12 +248,21 @@ export default function ComfyUISetup() {
       setLoadingAnimeLofi(false)
     }
   }, [])
+  const fetchHiggsTts = useCallback(async () => {
+    try {
+      const { data } = await http.get("/api/runpod/workflow?type=tts")
+      setHiggsTts(data)
+    } finally {
+      setLoadingHiggsTts(false)
+    }
+  }, [])
 
   useEffect(() => {
     fetchLtx()
     fetchLtxImg2vid()
     fetchAnimeLofi()
-  }, [fetchLtx, fetchLtxImg2vid, fetchAnimeLofi])
+    fetchHiggsTts()
+  }, [fetchLtx, fetchLtxImg2vid, fetchAnimeLofi, fetchHiggsTts])
 
   return (
     <Box sx={{ height: "100%", overflow: "auto", p: { xs: 2, md: 3 } }}>
@@ -277,7 +289,7 @@ export default function ComfyUISetup() {
         <RunPodStatusCard />
 
         <Grid container spacing={2}>
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={3}>
             <WorkflowCard
               workflow={ltx}
               title="LTX Audio→Video"
@@ -287,7 +299,7 @@ export default function ComfyUISetup() {
               onRefresh={fetchLtx}
             />
           </Grid>
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={3}>
             <WorkflowCard
               workflow={ltxImg2vid}
               title="LTX Image→Video"
@@ -297,7 +309,7 @@ export default function ComfyUISetup() {
               onRefresh={fetchLtxImg2vid}
             />
           </Grid>
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={3}>
             <WorkflowCard
               workflow={animeLofi}
               title="Z-turbo Image"
@@ -307,7 +319,27 @@ export default function ComfyUISetup() {
               onRefresh={fetchAnimeLofi}
             />
           </Grid>
+          <Grid item xs={12} md={3}>
+            <WorkflowCard
+              workflow={higgsTts}
+              title="Higgs v3 TTS"
+              icon={<RecordVoiceOverIcon sx={{ color: "success.main", fontSize: 24 }} />}
+              loading={loadingHiggsTts}
+              setupType="tts"
+              onRefresh={fetchHiggsTts}
+            />
+          </Grid>
         </Grid>
+        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3 }}>
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>Higgs v3 TTS</Typography>
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            The model auto-downloads on first workflow run from the public HuggingFace repo
+            <Typography component="code" variant="body2" sx={{ bgcolor: "grey.800", px: 0.5, borderRadius: 1, mx: 0.5 }}>
+              bosonai/higgs-audio-v3-tts-4b
+            </Typography>
+            using <strong>download_if_missing: true</strong>. No manual tokenizer downloads needed.
+          </Typography>
+        </Paper>
       </Stack>
     </Box>
   )

@@ -31,8 +31,8 @@ SEGMENTS_DIR = STORAGE / "segments"
 VIDEOS_DIR = STORAGE / "videos"
 
 # LTX struggles with short (<3s) or fractional durations.
-# Always generate a 5s video then trim to the actual target length.
-LTX_WORKFLOW_DURATION = 5
+# Always generate to the next multiple of 5s, then trim to actual target.
+LTX_SEGMENT_BASE = 5
 
 
 def _load_mapping() -> dict:
@@ -192,8 +192,10 @@ async def generate_segment_video(
     image_path: str,
     video_prompt: str,
     user_settings=None,
+    duration_sec: float = 5.0,
 ) -> dict:
-    """Upload image, run LTX img2vid — always produces a 5s clip.
+    """Upload image, run LTX img2vid — rounds *duration_sec* up to next
+    multiple of ``LTX_SEGMENT_BASE`` (5s), then trim to actual target.
 
     Returns local file info with *url*, *filename*, *path*.
     """
@@ -211,8 +213,13 @@ async def generate_segment_video(
     # 1. Upload segment image to ComfyUI's input directory
     remote_name = await upload_to_comfy(base_url, Path(image_path))
 
-    # 2. Build workflow at fixed 5s (LTX is unreliable for short/fractional durations)
-    workflow = build_img2vid_workflow(remote_name, video_prompt, LTX_WORKFLOW_DURATION)
+    # 2. Round duration up to next multiple of LTX_SEGMENT_BASE (5s)
+    #    LTX is unreliable for short/fractional durations; we trim later.
+    gen_duration = max(
+        ((int(duration_sec) + LTX_SEGMENT_BASE - 1) // LTX_SEGMENT_BASE) * LTX_SEGMENT_BASE,
+        LTX_SEGMENT_BASE,
+    )
+    workflow = build_img2vid_workflow(remote_name, video_prompt, gen_duration)
     prompt_id = await submit_comfy_workflow(base_url, workflow)
     result = await wait_for_comfy_output(base_url, prompt_id)
 
@@ -253,7 +260,7 @@ async def generate_all_segment_videos(
         prompt = video_prompts[i] if i < len(video_prompts) else ""
         dur = durations[i] if i < len(durations) else 3.0
         try:
-            vid_info = await generate_segment_video(img["path"], prompt, user_settings)
+            vid_info = await generate_segment_video(img["path"], prompt, user_settings, duration_sec=dur)
         except Exception as e:
             logger.error("Video gen failed for segment %s: %s", img.get("scene_number"), e)
             vid_info = {
@@ -280,14 +287,14 @@ async def generate_all_segment_videos(
     return results
 
 
-# ── TTS (Chatterbox RT2Voice) ──────────────────────────────────────────
+# ── TTS (Higgs v3 Voice Clone) ────────────────────────────────────────
 
 AUDIO_DIR = STORAGE / "audio"
 REFERENCE_AUDIO = WORKFLOWS_DIR / "en-reference-audio.mp3"
 
 
 def build_tts_workflow(text: str, seed: int | None = None) -> dict:
-    """Inject voiceover text and seed into the Chatterbox RT2Voice TTS workflow."""
+    """Inject voiceover text and seed into the Higgs v3 Voice Clone workflow."""
     mapping = _load_mapping()
     cfg = mapping["tts"]
     workflow = _load_raw_workflow(cfg["workflow_file"])
@@ -306,7 +313,7 @@ def build_tts_workflow(text: str, seed: int | None = None) -> dict:
 
 
 async def generate_audio_on_runpod(text: str, user_settings=None) -> dict:
-    """Generate TTS audio via Chatterbox RT2Voice on the RunPod ComfyUI pod.
+    """Generate TTS audio via Higgs v3 Voice Clone on the RunPod ComfyUI pod.
 
     Uploads the reference audio file, builds the workflow, submits it,
     waits for the result, and downloads the MP3.
