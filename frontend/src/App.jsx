@@ -5,19 +5,9 @@ import ErrorBoundary from "./components/ErrorBoundary"
 import Layout from "./components/Layout"
 import useAppStore from "./store/appStore"
 import { pluginRoutes } from "./plugins"
-import CreatorHome from "./pages/CreatorHome"
-import ComfyUISetup from "./pages/ComfyUISetup"
 import CreatorNiche from "./pages/CreatorNiche"
 
-const Settings = lazy(() => import("./pages/Settings"))
-const Videos = lazy(() => import("./pages/Videos"))
-const StockVideo = lazy(() => import("./pages/StockVideo"))
-const Channels = lazy(() => import("./pages/Channels"))
-const Messaging = lazy(() => import("./pages/Messaging"))
-const ClipStudio = lazy(() => import("./pages/ClipStudio"))
-const AiVideo = lazy(() => import("./pages/AiVideo"))
-const LongFormVideo = lazy(() => import("./pages/LongFormVideo"))
-const Niche1Studio = lazy(() => import("./pages/Niche1Studio"))
+const ComfyUISetup = lazy(() => import("./pages/ComfyUISetup"))
 const AnimeLofiStudio = lazy(() => import("./pages/AnimeLofiStudio"))
 
 const LazyFallback = () => (
@@ -67,28 +57,14 @@ export default function App() {
         <Suspense fallback={<LazyFallback />}>
           <Routes>
             <Route path="/" element={<Layout />}>
-              <Route index element={<Navigate to="/creator" />} />
-              <Route path="creator" element={<CreatorHome />} />
-              <Route path="comfyui" element={<ComfyUISetup />} />
+              <Route index element={<Navigate to="/niche/anime-lofi" />} />
               <Route path="niche/:slug" element={<CreatorNiche />} />
-              <Route path="dashboard" element={<Navigate to="/creator" />} />
-              <Route path="videos" element={<Videos />} />
-              <Route path="stock" element={<StockVideo />} />
-              <Route path="ai-video" element={<AiVideo />} />
-              <Route path="longform" element={<LongFormVideo />} />
-              <Route path="avatar" element={<Navigate to="/stock" />} />
-              <Route path="create" element={<Navigate to="/stock" />} />
-              <Route path="cron" element={<Navigate to="/creator" />} />
-              <Route path="clips" element={<ClipStudio />} />
-              <Route path="niche1" element={<Niche1Studio />} />
+              <Route path="comfyui" element={<ComfyUISetup />} />
               <Route path="anime-lofi" element={<AnimeLofiStudio />} />
-              <Route path="channels" element={<Channels />} />
-              <Route path="messaging" element={<Messaging />} />
-              <Route path="settings" element={<Settings />} />
               {pluginRoutes.map(({ path, element }) => (
                 <Route key={path} path={path} element={element} />
               ))}
-              <Route path="*" element={<Navigate to="/creator" />} />
+              <Route path="*" element={<Navigate to="/niche/anime-lofi" />} />
             </Route>
           </Routes>
         </Suspense>

@@ -3,62 +3,40 @@ import { Outlet, NavLink, useLocation } from "react-router-dom"
 import useWebSocket from "../hooks/useWebSocket"
 import {
   Box, Drawer, List, ListItemButton, ListItemIcon, ListItemText,
-  Typography, Divider, IconButton, useMediaQuery, useTheme, Tooltip, Badge,
+  Typography, Divider, IconButton, useMediaQuery, useTheme, Tooltip,
 } from "@mui/material"
-import useAppStore from "../store/appStore"
-import { pluginNavItems } from "../plugins"
-import MenuIcon from "@mui/icons-material/MenuOutlined"
-import ChevronLeftIcon from "@mui/icons-material/ChevronLeft"
-import ChevronRightIcon from "@mui/icons-material/ChevronRight"
-import HomeIcon from "@mui/icons-material/HomeOutlined"
 import CloudQueueIcon from "@mui/icons-material/CloudQueueOutlined"
 import MovieCreationIcon from "@mui/icons-material/MovieCreationOutlined"
-import VideoLibraryIcon from "@mui/icons-material/OndemandVideoOutlined"
-import SettingsIcon from "@mui/icons-material/SettingsOutlined"
 import { creatorNiches } from "../data/creatorNiches"
 
 const DRAWER_WIDTH = 240
 const COLLAPSED_WIDTH = 64
 
 const navItems = [
-  { to: "/creator", icon: <HomeIcon />, label: "Creator Home" },
   { to: "/comfyui", icon: <CloudQueueIcon />, label: "ComfyUI Setup" },
   ...creatorNiches.map((niche) => ({
-    to: niche.slug === "niche1" ? "/niche1" : `/niche/${niche.slug}`,
+    to: `/niche/${niche.slug}`,
     icon: <MovieCreationIcon />,
     label: niche.label,
   })),
 ]
 
-const bottomItems = [
-  { to: "/videos", icon: <VideoLibraryIcon />, label: "Library" },
-  ...pluginNavItems.filter(i => i.position === "bottom"),
-  { to: "/settings",  icon: <SettingsIcon />,     label: "Settings" },
-]
-
 export default function Layout() {
-  useWebSocket()  // Global WS connection — active on all pages
+  useWebSocket()
   const location = useLocation()
   const theme = useTheme()
   const isNarrow = useMediaQuery(theme.breakpoints.down("md"))
   const [mobileOpen, setMobileOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
-  const activeJobs = useAppStore(s => s.activeJobs)
-  const runningJobCount = Object.values(activeJobs).filter(j => j.status === "running").length
 
   const drawerWidth = collapsed && !isNarrow ? COLLAPSED_WIDTH : DRAWER_WIDTH
 
-  const isActive = (to) => {
-    if (to === "/creator") return location.pathname === "/" || location.pathname === "/creator"
-    return location.pathname.startsWith(to)
-  }
+  const isActive = (to) => location.pathname.startsWith(to)
 
   const renderNavItem = ({ to, icon, label }) => {
     const active = isActive(to)
     const isCollapsed = collapsed && !isNarrow
-    const renderedIcon = (to === "/videos" && runningJobCount > 0)
-      ? <Badge color="warning" variant="dot">{icon}</Badge>
-      : icon
+
     const button = (
       <ListItemButton
         key={to}
@@ -75,9 +53,9 @@ export default function Layout() {
           position: "relative",
           color: active ? "primary.main" : "text.secondary",
           "&.Mui-selected": {
-            bgcolor: "rgba(201,100,66,0.1)",
-            boxShadow: (theme) => `inset 0 0 0 1px rgba(201,100,66,0.12), ${theme.customShadows?.sm}`,
-            "&:hover": { bgcolor: "rgba(201,100,66,0.13)" },
+            bgcolor: "rgba(100,149,237,0.1)",
+            boxShadow: (theme) => `inset 0 0 0 1px rgba(100,149,237,0.12), ${theme.customShadows?.sm}`,
+            "&:hover": { bgcolor: "rgba(100,149,237,0.13)" },
           },
           "&:hover": {
             bgcolor: "action.hover",
@@ -96,7 +74,7 @@ export default function Layout() {
             transition: "transform 0.15s ease",
           }}
         >
-          {renderedIcon}
+          {icon}
         </ListItemIcon>
         {!isCollapsed && (
           <ListItemText
@@ -119,7 +97,6 @@ export default function Layout() {
 
   const drawerContent = (
     <>
-      {/* Logo + collapse toggle */}
       <Box sx={{ px: collapsed && !isNarrow ? 1 : 2.5, py: 2.5, display: "flex", alignItems: "center", justifyContent: collapsed && !isNarrow ? "center" : "space-between" }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.2, overflow: "hidden" }}>
           <Box
@@ -147,15 +124,12 @@ export default function Layout() {
         </Box>
         {!isNarrow && !collapsed && (
           <IconButton size="small" onClick={() => setCollapsed(true)} sx={{
-            ml: 0.5,
-            color: "primary.main",
-            bgcolor: "action.hover",
-            border: 1,
-            borderColor: "divider",
+            ml: 0.5, color: "primary.main", bgcolor: "action.hover",
+            border: 1, borderColor: "divider",
             "&:hover": { bgcolor: "primary.main", color: "#fff" },
             transition: "all 0.15s",
           }}>
-            <ChevronLeftIcon sx={{ fontSize: 18 }} />
+            <MovieCreationIcon sx={{ fontSize: 18 }} />
           </IconButton>
         )}
       </Box>
@@ -165,44 +139,18 @@ export default function Layout() {
       <List sx={{ px: collapsed && !isNarrow ? 0.75 : 1.5, flex: 1 }}>
         {navItems.map(renderNavItem)}
       </List>
-
-      <Divider sx={{ mx: collapsed && !isNarrow ? 1 : 2, mb: 0.5, opacity: 0.5 }} />
-
-      <List sx={{ px: collapsed && !isNarrow ? 0.75 : 1.5, pb: 1 }}>
-        {bottomItems.map(renderNavItem)}
-        {/* Expand button at the bottom when collapsed */}
-        {!isNarrow && collapsed && (
-          <Tooltip title="Expand sidebar" placement="right" arrow>
-            <ListItemButton
-              onClick={() => setCollapsed(false)}
-              sx={{
-                borderRadius: 2, py: 0.75, justifyContent: "center",
-                border: 1, borderColor: "divider",
-                color: "primary.main",
-                "&:hover": { bgcolor: "primary.main", color: "#fff" },
-                transition: "all 0.15s",
-              }}
-            >
-              <ChevronRightIcon sx={{ fontSize: 20 }} />
-            </ListItemButton>
-          </Tooltip>
-        )}
-      </List>
     </>
   )
 
   return (
     <Box sx={{ display: "flex", height: "100vh" }}>
-      {/* Mobile: overlay drawer */}
       {isNarrow ? (
         <Drawer
           variant="temporary"
           open={mobileOpen}
           onClose={() => setMobileOpen(false)}
           ModalProps={{ keepMounted: true }}
-          sx={{
-            "& .MuiDrawer-paper": { width: DRAWER_WIDTH },
-          }}
+          sx={{ "& .MuiDrawer-paper": { width: DRAWER_WIDTH } }}
         >
           {drawerContent}
         </Drawer>
@@ -234,7 +182,6 @@ export default function Layout() {
           flexDirection: "column",
         }}
       >
-        {/* Mobile top bar with hamburger */}
         {isNarrow && (
           <Box sx={{
             display: "flex", alignItems: "center", gap: 1,
@@ -243,7 +190,7 @@ export default function Layout() {
             bgcolor: "background.paper",
           }}>
             <IconButton size="small" onClick={() => setMobileOpen(true)}>
-              <MenuIcon />
+              <MovieCreationIcon />
             </IconButton>
             <Box component="img" src="/icon-192.png" alt="" sx={{ width: 24, height: 24, borderRadius: 0.5 }} />
             <Typography

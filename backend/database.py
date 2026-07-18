@@ -56,39 +56,22 @@ async def get_db() -> AsyncSession:
 
 async def init_db():
     """Create all tables. Called once at startup from run.py."""
-    # Import all models so Base knows about them
-    from backend.models import (  # noqa: F401
-        user_settings, user_behavior, feature_flag,
-        job, scout_result, downloaded_video, generated_video,
-        messaging_config, chat_session, user_profile,
-        video_metrics, viral_formula,
-        connected_channel, dynamic_template, caption_style,
-        longform,
-    )
+    from backend.models import user_settings, job  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Idempotent column additions for SQLite (no Alembic)
-        await _add_column_if_missing(conn, "downloaded_videos", "transcript_segments_json", "TEXT")
-        await _add_column_if_missing(conn, "generated_videos", "source_type", "VARCHAR(30)")
-        # Clip extraction fields
-        await _add_column_if_missing(conn, "generated_videos", "clip_start_seconds", "FLOAT")
-        await _add_column_if_missing(conn, "generated_videos", "clip_end_seconds", "FLOAT")
-        await _add_column_if_missing(conn, "generated_videos", "clip_virality_score", "FLOAT")
-        await _add_column_if_missing(conn, "generated_videos", "clip_virality_reason", "TEXT")
-        await _add_column_if_missing(conn, "generated_videos", "caption_status", "VARCHAR(20)")
-        await _add_column_if_missing(conn, "generated_videos", "metadata_status", "VARCHAR(20)")
-        # BYOK: per-user encrypted keys (override .env at runtime)
         await _add_column_if_missing(conn, "user_settings", "ai_provider", "VARCHAR(20)")
         await _add_column_if_missing(conn, "user_settings", "ai_model", "VARCHAR(100)")
         await _add_column_if_missing(conn, "user_settings", "ai_api_key_encrypted", "TEXT")
-        await _add_column_if_missing(conn, "user_settings", "youtube_api_key_encrypted", "TEXT")
         await _add_column_if_missing(conn, "user_settings", "runpod_api_key_encrypted", "TEXT")
         await _add_column_if_missing(conn, "user_settings", "runpod_pod_id", "VARCHAR(64)")
+        await _add_column_if_missing(conn, "jobs", "job_type", "VARCHAR(64)")
+        await _add_column_if_missing(conn, "jobs", "current_step", "VARCHAR(200)")
+        await _add_column_if_missing(conn, "jobs", "progress_pct", "INTEGER")
+        await _add_column_if_missing(conn, "jobs", "input_json", "TEXT")
+        await _add_column_if_missing(conn, "jobs", "output_data", "TEXT")
+        await _add_column_if_missing(conn, "jobs", "error_message", "TEXT")
 
-    # Migrate deprecated model slugs
     await _migrate_deprecated_models()
-
-    # Clean up zombie jobs — any jobs stuck at "running"/"pending" from a previous crash
     await _cleanup_zombie_jobs()
 
 
