@@ -30,6 +30,8 @@
     "save_audio_input_prefix_key": "filename_prefix",
     "reference_audio_node_id": "8",
     "reference_audio_input_key": "audio",
+    "reference_text_node_id": "35",
+    "reference_text_input_key": "reference_text",
     "seed_node_id": "35",
     "seed_input_key": "seed",
     "temperature_node_id": "35",

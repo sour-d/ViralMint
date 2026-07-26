@@ -25,6 +25,7 @@ from backend.core.api_keys import get_runpod_api_key, get_runpod_pod_id
 logger = logging.getLogger(__name__)
 
 WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 MAPPING_FILE = WORKFLOWS_DIR / "runpod_mapping_anime_lofi.json"
 STORAGE = Path("storage/anime_lofi")
 SEGMENTS_DIR = STORAGE / "segments"
@@ -290,11 +291,33 @@ async def generate_all_segment_videos(
 # ── TTS (Higgs v3 Voice Clone) ────────────────────────────────────────
 
 AUDIO_DIR = STORAGE / "audio"
-REFERENCE_AUDIO = WORKFLOWS_DIR / "en-reference-audio.mp3"
+REF_AUDIO_DIR = ASSETS_DIR / "ref_audio"
 
 
-def build_tts_workflow(text: str, seed: int | None = None) -> dict:
-    """Inject voiceover text and seed into the Higgs v3 Voice Clone workflow."""
+def list_ref_audios() -> list[dict]:
+    if not REF_AUDIO_DIR.exists():
+        return []
+    files = []
+    for f in sorted(REF_AUDIO_DIR.iterdir()):
+        if f.suffix.lower() in (".mp3", ".wav", ".ogg", ".m4a"):
+            files.append({
+                "filename": f.name,
+                "url": f"/api/anime-lofi/media/ref_audio/{f.name}",
+            })
+    return files
+
+
+def resolve_ref_audio(filename: str | None) -> Path:
+    if filename:
+        path = REF_AUDIO_DIR / filename
+        if path.exists():
+            return path
+        raise FileNotFoundError(f"Reference audio not found: {filename}")
+    return WORKFLOWS_DIR / "en-reference-audio.mp3"
+
+
+def build_tts_workflow(text: str, seed: int | None = None, ref_audio_filename: str | None = None, reference_text: str | None = None) -> dict:
+    """Inject voiceover text, seed, reference audio, and reference text into the Higgs v3 Voice Clone workflow."""
     mapping = _load_mapping()
     cfg = mapping["tts"]
     workflow = _load_raw_workflow(cfg["workflow_file"])
@@ -309,15 +332,21 @@ def build_tts_workflow(text: str, seed: int | None = None) -> dict:
     if seed_nid in workflow:
         workflow[seed_nid]["inputs"][seed_key] = seed if seed is not None else random.randint(0, 2**32 - 1)
 
+    ref_nid = str(cfg.get("reference_audio_node_id", ""))
+    ref_key = cfg.get("reference_audio_input_key", "audio")
+    if ref_nid in workflow and ref_audio_filename:
+        workflow[ref_nid]["inputs"][ref_key] = ref_audio_filename
+
+    ref_text_nid = str(cfg.get("reference_text_node_id", ""))
+    ref_text_key = cfg.get("reference_text_input_key", "reference_text")
+    if ref_text_nid in workflow and reference_text:
+        workflow[ref_text_nid]["inputs"][ref_text_key] = reference_text
+
     return workflow
 
 
-async def generate_audio_on_runpod(text: str, user_settings=None) -> dict:
-    """Generate TTS audio via Higgs v3 Voice Clone on the RunPod ComfyUI pod.
-
-    Uploads the reference audio file, builds the workflow, submits it,
-    waits for the result, and downloads the MP3.
-    """
+async def generate_audio_on_runpod(text: str, user_settings=None, ref_audio: str | None = None) -> dict:
+    """Generate TTS audio via Higgs v3 Voice Clone on the RunPod ComfyUI pod."""
     api_key = get_runpod_api_key(user_settings)
     pod_id = get_runpod_pod_id(user_settings)
     if not api_key or not pod_id:
@@ -329,12 +358,22 @@ async def generate_audio_on_runpod(text: str, user_settings=None) -> dict:
 
     base_url = get_comfy_base_url(pod_id)
 
-    # 1. Upload reference audio to ComfyUI's input directory
-    if REFERENCE_AUDIO.exists():
-        await upload_to_comfy(base_url, REFERENCE_AUDIO)
+    ref_path = resolve_ref_audio(ref_audio)
+    ref_filename = None
+    ref_text = None
+    if ref_path.exists():
+        ref_filename = await upload_to_comfy(base_url, ref_path)
+        try:
+            from backend.services.whisper_service import whisper_service
+            transcription = await whisper_service.transcribe(str(ref_path))
+            ref_text = (transcription.get("text") or "").strip()
+            if ref_text:
+                logger.info("Transcribed ref audio (%s): %.80s", ref_path.name, ref_text)
+        except Exception as exc:
+            logger.warning("Failed to transcribe ref audio: %s", exc)
 
     # 2. Build and submit TTS workflow
-    workflow = build_tts_workflow(text)
+    workflow = build_tts_workflow(text, ref_audio_filename=ref_filename, reference_text=ref_text)
     prompt_id = await submit_comfy_workflow(base_url, workflow)
 
     # 3. Wait for audio output

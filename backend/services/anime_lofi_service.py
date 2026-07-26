@@ -48,6 +48,7 @@ import backend.services.anime_lofi_llm as n2llm
 async def generate_script(
     user_idea: str,
     user_settings=None,
+    language: str = "English",
 ) -> dict:
     """Generate structured segments via the lo-fi anime LLM prompt.
 
@@ -59,6 +60,7 @@ async def generate_script(
     segments = await n2llm.generate_structured_script(
         user_idea=user_idea,
         user_settings=user_settings,
+        language=language,
     )
     full_script = await n2llm.voiceover_text_from_segments(segments)
     return {"segments": segments, "full_script": full_script}
@@ -70,12 +72,13 @@ async def generate_audio(
     script: str,
     voice: str = "en-US-AndrewMultilingualNeural",
     user_settings=None,
+    ref_audio: str | None = None,
 ) -> dict:
-    """Generate TTS audio — tries ComfyUI Chatterbox first, falls back to local TTS."""
+    """Generate TTS audio — tries ComfyUI Higgs first, falls back to local TTS."""
     _ensure_dirs()
     try:
         from backend.services.anime_lofi_comfy import generate_audio_on_runpod
-        result = await generate_audio_on_runpod(text=script, user_settings=user_settings)
+        result = await generate_audio_on_runpod(text=script, user_settings=user_settings, ref_audio=ref_audio)
         logger.info("Audio generated via ComfyUI Chatterbox RT2Voice")
         audio_path = Path(result["path"])
         result["duration"] = await _get_total_duration(audio_path)

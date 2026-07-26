@@ -15,6 +15,7 @@ from backend.services.anime_lofi_service import (
     render_raw_video, render_compilation_video,
     AUDIO_DIR, SEGMENTS_DIR, OUTPUT_DIR, STORAGE,
 )
+from backend.services.anime_lofi_comfy import list_ref_audios
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ async def _get_user_settings():
 @router.post("/generate-script")
 async def api_generate_script(body: dict = Body(default_factory=dict)):
     user_idea = body.get("user_idea", "")
+    language = body.get("language", "English")
     if not user_idea:
         raise HTTPException(400, detail="user_idea is required")
     user_settings = await _get_user_settings()
@@ -73,6 +75,7 @@ async def api_generate_script(body: dict = Body(default_factory=dict)):
         result = await generate_script(
             user_idea=user_idea,
             user_settings=user_settings,
+            language=language,
         )
         return {"ok": True, **result}
     except ValueError as e:
@@ -82,14 +85,20 @@ async def api_generate_script(body: dict = Body(default_factory=dict)):
         raise HTTPException(500, detail=str(e))
 
 
+@router.get("/ref-audios")
+async def api_list_ref_audios():
+    return {"audios": list_ref_audios()}
+
+
 @router.post("/generate-audio")
 async def api_generate_audio(body: dict = Body(...)):
     script = body.get("script", "")
+    ref_audio = body.get("ref_audio")
     if not script:
         raise HTTPException(400, detail="script is required")
     user_settings = await _get_user_settings()
     try:
-        result = await generate_audio(script=script, user_settings=user_settings)
+        result = await generate_audio(script=script, user_settings=user_settings, ref_audio=ref_audio)
         return {"ok": True, **result}
     except Exception as e:
         logger.error(f"Audio gen failed: {e}")
@@ -100,11 +109,12 @@ async def api_generate_audio(body: dict = Body(...)):
 async def api_retry_audio(body: dict = Body(...)):
     """Regenerate audio with (optionally edited) script."""
     script = body.get("script", "")
+    ref_audio = body.get("ref_audio")
     if not script:
         raise HTTPException(400, detail="script is required")
     user_settings = await _get_user_settings()
     try:
-        result = await generate_audio(script=script, user_settings=user_settings)
+        result = await generate_audio(script=script, user_settings=user_settings, ref_audio=ref_audio)
         return {"ok": True, **result}
     except Exception as e:
         logger.error(f"Audio retry failed: {e}")
@@ -438,6 +448,16 @@ async def api_delete_session(session_id: str):
         raise HTTPException(404, detail=f"Session {session_id} not found")
     shutil.rmtree(str(sess_dir), ignore_errors=True)
     return {"ok": True}
+
+
+@router.get("/media/ref_audio/{filename:path}")
+async def serve_ref_audio(filename: str):
+    safe_name = Path(filename).name
+    from backend.services.anime_lofi_comfy import REF_AUDIO_DIR
+    path = REF_AUDIO_DIR / safe_name
+    if path.exists():
+        return FileResponse(str(path), media_type="audio/mpeg")
+    raise HTTPException(404, detail=f"Ref audio not found: {filename}")
 
 
 @router.get("/media/{filename:path}")

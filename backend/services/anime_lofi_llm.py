@@ -21,6 +21,14 @@ The tone must be melancholic, peaceful, profound, and deeply human.
 
 User Theme: {USER_IDEA}
 
+LANGUAGE CONSTRAINT: The voiceover / spoken dialogue must be written entirely in {LANGUAGE}. All other content — scene descriptions, image prompts, video prompts, and any non-dialogue text — MUST remain in English.
+
+CRITICAL SCRIPT FORMAT RULE: If {LANGUAGE} is not English, you MUST write the voiceover using that language's NATIVE WRITING SYSTEM. For example:
+- Hindi → देवनागरी लिपि (Devanagari script), NOT romanised Hindi like "tum kaise ho"
+- Bengali → বাংলা লিপি (Bengali script), NOT romanised Bengali like "tumi kemon acho"
+- English → normal Latin script
+Do NOT transliterate. Use the proper script of that language natively.
+
 Follow these strict constraints:
 1. Length: The total spoken script must be exactly 50 to 80 words.
 2. Structure: Divide the script into 4 to 6 distinct segments. Each segment has a voiceover (one or more lines) and a unique image. A segment can have a single line OR multiple lines (2-3 short, related lines that flow together as one cohesive thought under the same image). Use newlines (`\n`) between lines within a segment's voiceover.
@@ -71,6 +79,7 @@ async def generate_structured_script(
     user_idea: str,
     user_settings=None,
     max_retries: int = 3,
+    language: str = "English",
 ) -> list[dict]:
     """Send *user_idea* to the LLM and return parsed segments.
 
@@ -89,7 +98,8 @@ async def generate_structured_script(
     Raises ``ValueError`` if the LLM response cannot be parsed or required keys are missing.
     """
     safe_idea = user_idea.replace("{", "{{").replace("}", "}}")
-    prompt_text = LLM_SEGMENTS_SYSTEM_PROMPT.format(USER_IDEA=safe_idea)
+    safe_lang = language.replace("{", "{{").replace("}", "}}")
+    prompt_text = LLM_SEGMENTS_SYSTEM_PROMPT.format(USER_IDEA=safe_idea, LANGUAGE=safe_lang)
 
     last_exc: Exception | None = None
     last_raw = ""

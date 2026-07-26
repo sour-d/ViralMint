@@ -4,6 +4,7 @@ import {
   Stepper, Step, StepLabel, Chip, Card, CardMedia,
   TextField, Alert, Grid, Tooltip, IconButton,
   Dialog, DialogTitle, DialogContent, DialogActions, List, ListItemButton, ListItemText,
+  Select, MenuItem, FormControl, InputLabel,
 } from "@mui/material"
 import http from "../api/http"
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome"
@@ -77,10 +78,13 @@ export default function AnimeLofiStudio() {
   const [error, setError] = useState(null)
 
   const [userIdea, setUserIdea] = useState(saved?.userIdea ?? "")
+  const [language, setLanguage] = useState(saved?.language ?? "English")
   const [segments, setSegments] = useState(saved?.segments ?? [])
   const [fullScript, setFullScript] = useState(saved?.fullScript ?? "")
 
   const [audioInfo, setAudioInfo] = useState(saved?.audioInfo ?? null)
+  const [refAudios, setRefAudios] = useState([])
+  const [selectedRefAudio, setSelectedRefAudio] = useState("")
 
   const [images, setImages] = useState(saved?.images ?? [])
   const [imageProgress, setImageProgress] = useState(null)
@@ -117,14 +121,14 @@ export default function AnimeLofiStudio() {
   }
 
   // Build the full state object (camelCase keys match JavaScript variable names)
-  const currentState = { activeStep, userIdea, segments, fullScript, audioInfo, images, videos, finalVideo }
+  const currentState = { activeStep, userIdea, language, segments, fullScript, audioInfo, images, videos, finalVideo, selectedRefAudio }
 
   // Persist to localStorage (immediate fallback)
   useEffect(() => {
     saveLocalState(currentState)
-  }, [currentState.activeStep, currentState.userIdea, currentState.segments,
+  }, [currentState.activeStep, currentState.userIdea, currentState.language, currentState.segments,
       currentState.fullScript, currentState.audioInfo, currentState.images,
-      currentState.videos, currentState.finalVideo])
+      currentState.videos, currentState.finalVideo, currentState.selectedRefAudio])
 
   // Persist to backend session with 2s debounce
   const saveTimerRef = useRef(null)
@@ -136,9 +140,15 @@ export default function AnimeLofiStudio() {
       saveSession(sessionId, stateToSave)
     }, 2000)
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
-  }, [sessionId, currentState.activeStep, currentState.userIdea, currentState.segments,
+  }, [sessionId, currentState.activeStep, currentState.userIdea, currentState.language, currentState.segments,
       currentState.fullScript, currentState.audioInfo, currentState.images,
-      currentState.videos, currentState.finalVideo])
+      currentState.videos, currentState.finalVideo, currentState.selectedRefAudio])
+
+  useEffect(() => {
+    http.get("/api/anime-lofi/ref-audios").then(({ data }) => {
+      if (data.audios?.length) setRefAudios(data.audios)
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     return () => { stopPolling(pollRef); stopPolling(videoPollRef); stopRetryPolls(); stopRetryImagePolls() }
@@ -154,9 +164,11 @@ export default function AnimeLofiStudio() {
           setSessionId(lastId)
           setActiveStep(state.activeStep ?? state.active_step ?? 0)
           setUserIdea(state.userIdea ?? state.user_idea ?? "")
+          setLanguage(state.language ?? "English")
           setSegments(state.segments ?? [])
           setFullScript(state.fullScript ?? state.full_script ?? "")
           setAudioInfo(state.audioInfo ?? state.audio_info ?? null)
+          setSelectedRefAudio(state.selectedRefAudio ?? "")
           setImages(state.images ?? [])
           setVideos(state.videos ?? [])
           setFinalVideo(state.finalVideo ?? state.final_video ?? null)
@@ -180,7 +192,7 @@ export default function AnimeLofiStudio() {
         setSessionId(sid)
         localStorage.setItem(LAST_SESSION_KEY, sid)
       }
-      const res = await http.post("/api/anime-lofi/generate-script", { user_idea: userIdea })
+      const res = await http.post("/api/anime-lofi/generate-script", { user_idea: userIdea, language })
       setSegments(res.data.segments || [])
       setFullScript(res.data.full_script || "")
       // Refresh session list
@@ -204,7 +216,9 @@ export default function AnimeLofiStudio() {
     setLoading(true); setError(null)
     try {
       const endpoint = audioInfo ? "/api/anime-lofi/retry-audio" : "/api/anime-lofi/generate-audio"
-      const res = await http.post(endpoint, { script: scriptToSend })
+      const body = { script: scriptToSend }
+      if (selectedRefAudio) body.ref_audio = selectedRefAudio
+      const res = await http.post(endpoint, body)
       setAudioInfo(res.data)
     } catch (e) { setError(e.response?.data?.detail || "Audio gen failed") }
     finally { setLoading(false) }
@@ -553,6 +567,14 @@ export default function AnimeLofiStudio() {
                   placeholder="e.g. The quiet loneliness of waiting for a train at midnight in a small coastal town"
                   value={userIdea} onChange={(e) => setUserIdea(e.target.value)}
                   multiline minRows={3} maxRows={5} />
+                <FormControl size="small" sx={{ minWidth: 160 }}>
+                  <InputLabel>Dialog Language</InputLabel>
+                  <Select value={language} label="Dialog Language" onChange={(e) => setLanguage(e.target.value)}>
+                    <MenuItem value="English">English</MenuItem>
+                    <MenuItem value="Hindi">Hindi</MenuItem>
+                    <MenuItem value="Bengali">Bengali</MenuItem>
+                  </Select>
+                </FormControl>
                 <Stack direction="row" spacing={2} alignItems="center">
                   <Button variant="contained" onClick={handleGenerateScript} disabled={loading || !userIdea.trim()}
                     startIcon={loading ? <CircularProgress size={18} /> : <AutoAwesomeIcon />}
@@ -597,6 +619,23 @@ export default function AnimeLofiStudio() {
                 <TextField label="Full script (editable)"
                   value={editableScript} onChange={(e) => setEditableScript(e.target.value)}
                   multiline minRows={4} maxRows={10} />
+                {refAudios.length > 0 && (
+                  <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
+                    <FormControl size="small" sx={{ minWidth: 240 }}>
+                      <InputLabel>Reference Voice</InputLabel>
+                      <Select value={selectedRefAudio} label="Reference Voice" onChange={(e) => setSelectedRefAudio(e.target.value)}>
+                        <MenuItem value="">Default (English)</MenuItem>
+                        {refAudios.map((a) => (
+                          <MenuItem key={a.filename} value={a.filename}>{a.filename.replace(/\.mp3$/i, "").replace(/_/g, " ")}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    {selectedRefAudio && (
+                      <audio controls src={`/api/anime-lofi/media/ref_audio/${selectedRefAudio}`}
+                        style={{ height: 40, maxWidth: 220 }} />
+                    )}
+                  </Stack>
+                )}
                 <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
                   <Button variant="contained" onClick={() => handleGenerateAudio(true)} disabled={loading || !editableScript.trim()}
                     startIcon={loading ? <CircularProgress size={18} /> : <MusicNoteIcon />}
